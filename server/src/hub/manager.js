@@ -58,6 +58,12 @@ async function dispatchUpdate(botId, update) {
 export async function deployBot(botId) {
   const bot = await db.getBot(botId);
   if (!bot) throw new Error('Bot not found');
+  if (config.isServerless && bot.mode !== 'webhook') {
+    throw new Error(
+      'Long polling requires a long-running server, which serverless hosts (Vercel) cannot provide. ' +
+      'Switch this bot to webhook mode (PUBLIC_BASE_URL must be set), or host the backend on a persistent server.'
+    );
+  }
   await stopBot(botId, { keepStatus: true });
 
   const token = decryptToken(bot);
@@ -96,7 +102,10 @@ export async function stopBot(botId, { keepStatus = false } = {}) {
 }
 
 // Restart every bot that was running before a server restart.
+// No-op on serverless: there is no long-lived process to resume pollers, and
+// webhook bots recover their Telegram client lazily per invocation.
 export async function initManager() {
+  if (config.isServerless) return;
   let bots = [];
   try {
     bots = await db.listRunningBots();

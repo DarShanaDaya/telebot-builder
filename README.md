@@ -83,6 +83,42 @@ ngrok http 4000
 
 Deploys then register `https://…/webhooks/telegram/<botId>/<secret>` with Telegram automatically.
 
+## ☁️ Deploy to Vercel
+
+**Yes — with one architectural caveat.** Vercel serverless functions cannot keep long-running processes alive, and the filesystem is read-only. So on Vercel:
+
+| Works | Doesn't work |
+| --- | --- |
+| ✅ Frontend (static SPA) | ❌ Long-polling bots (needs a persistent process — deploys are rejected with a clear error) |
+| ✅ Full REST API as a serverless function | ❌ SQLite (read-only fs → **Supabase required**) |
+| ✅ **Webhook-mode bots** — perfect fit for serverless | |
+| ✅ Sessions, credentials, logs, multi-user auth | |
+
+### Steps
+
+1. **Push this repo to GitHub** and *Import Project* in Vercel. The included [`vercel.json`](vercel.json) already wires everything: client build, API serverless function ([`api/index.js`](api/index.js)), SPA fallback and a 60s function budget.
+2. **Create a Supabase project** and run [`server/db/supabase-schema.sql`](server/db/supabase-schema.sql) in its SQL editor.
+3. **Set environment variables** in Vercel → Project → Settings → Environment Variables:
+
+| Variable | Value |
+| --- | --- |
+| `JWT_SECRET` | any long random string |
+| `PLATFORM_SECRET` | any long random string (different one) |
+| `SUPABASE_URL` | `https://<project>.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase *service_role* key |
+| `PUBLIC_BASE_URL` | `https://<your-app>.vercel.app` |
+
+4. **Deploy**, create an account, add a bot and choose **Webhook** when deploying it. (If you forget Supabase, API calls return a precise "Database not configured…" message instead of an obscure crash.)
+
+> ⚠️ Set `PUBLIC_BASE_URL` to your final Vercel URL *and redeploy* if it changes (e.g. after adding a custom domain) — deployed webhook bots point at that URL.
+
+### Want polling bots too? Split hosting
+
+Keep the **frontend on Vercel** and host the **backend on a persistent server** (Railway / Render / Fly.io / any VPS, where both polling and webhook modes work with SQLite or Supabase):
+
+1. Deploy this repo to Railway/Render — start command `npm start` (after `npm run build`), it serves the whole app. You can even just use THAT full deployment and skip Vercel entirely.
+2. If you still prefer Vercel for the frontend: deploy with build env `VITE_API_URL=https://your-backend-host` — the client ([`src/api.js`](client/src/api.js)) then points all API calls there. CORS on the backend is already open.
+
 ## 🏗 Architecture
 
 ```

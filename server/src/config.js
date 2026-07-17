@@ -6,8 +6,14 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT_DIR = path.resolve(__dirname, '..', '..');
+const isServerlessHost = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 export const DATA_DIR = process.env.DATA_DIR || path.join(ROOT_DIR, '.data');
-fs.mkdirSync(DATA_DIR, { recursive: true });
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch {
+  // Read-only filesystem (serverless) — SQLite mode will be unavailable,
+  // the db layer surfaces a precise error if Supabase is not configured.
+}
 
 // Load (or generate + persist) server-side secrets. Generated secrets are kept
 // in .data/secrets.json so the platform works out-of-the-box while remaining
@@ -27,7 +33,14 @@ function loadSecrets() {
     platformSecret: process.env.PLATFORM_SECRET || persisted.platformSecret || crypto.randomBytes(32).toString('hex'),
   };
   if (!process.env.JWT_SECRET || !process.env.PLATFORM_SECRET) {
-    fs.writeFileSync(file, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+    try {
+      fs.writeFileSync(file, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+      if (isServerlessHost) {
+        console.warn('[config] WARNING: JWT_SECRET/PLATFORM_SECRET are not set — generated secrets do NOT persist on serverless. Set them as environment variables.');
+      }
+    } catch {
+      console.error('[config] Could not persist generated secrets (read-only fs). Set JWT_SECRET and PLATFORM_SECRET as environment variables.');
+    }
   }
   return secrets;
 }
@@ -36,6 +49,8 @@ const secrets = loadSecrets();
 
 export const config = {
   env: process.env.NODE_ENV || 'development',
+  isServerless: isServerlessHost,
+  isVercel: Boolean(process.env.VERCEL),
   port: Number(process.env.PORT || 4000),
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
   jwtSecret: secrets.jwtSecret,

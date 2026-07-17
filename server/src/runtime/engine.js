@@ -1,0 +1,291 @@
+import crypto from 'node:crypto';
+import { db } from '../db/index.js';
+import { config } from '../config.js';
+import { EXECUTORS } from './actions.js';
+import { resolveCredential } from '../credentials/service.js';
+
+// ---------------------------------------------------------------------------
+// Flow runtime engine. Transport-agnostic: both the long-polling manager and
+// the webhook router feed Telegram updates through handleUpdate().
+// Per-chat state (current node, variables, pending waits) lives in the
+// sessions table so conversations survive restarts.
+// ---------------------------------------------------------------------------
+
+const MAX_STEPS = 40;
+
+export function makeBotLogger(botId) {
+  return (level, message, chatId = null, dataObj = null) => {
+    const line = `[bot ${botId.slice(0, 8)}] ${message}`;
+    if (level === 'error') console.error(line);
+    else if (level !== 'debug') console.log(line);
+    db.addLog({
+      bot_id: botId,
+      chat_id: chatId == null ? null : String(chatId),
+      level,
+      message: String(message),
+      data: dataObj ? JSON.stringify(dataObj).slice(0, 4000) : null,
+      created_at: new Date().toISOString(),
+    }).catch((err) => console.error('[log] write failed:', err.message));
+  };
+}
+
+function nextEdgeOf(flow, nodeId, handle = 'out') {
+  const edge = (flow.edges || []).find(
+    (e) => e.source === nodeId && (e.sourceHandle || 'out') === (handle || 'out')
+  );
+  return edge ? edge.target : null;
+}
+
+function startNodeOf(flow) {
+  return (flow.nodes || []).find((n) => n.type === 'start') || null;
+}
+
+function safeJson(text, fallback = {}) {
+  try {
+    return text ? JSON.parse(text) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function buildCtx({ bot, client, log, chatId, from, flow, session, vars }) {
+  // Live template context: a Proxy so nodes that set variables mid-run (Set
+  // Variable plus a following Message, etc.) see each other's updates.
+  const telegramFields = {
+    chat_id: chatId,
+    first_name: from.first_name || '',
+    last_name: from.last_name || '',
+    username: from.username || '',
+    language: from.language_code || '',
+  };
+  const templateCtx = new Proxy(Object.create(null), {
+    get(_t, prop) {
+      if (typeof prop !== 'string') return undefined;
+      if (prop in telegramFields) return telegramFields[prop];
+      return vars[prop];
+    },
+    set(_t, prop, value) {
+      vars[prop] = value;
+      return true;
+    },
+  });
+  return {
+    bot,
+    client,
+    log: (level, msg, data) => log(level, msg, chatId, data),
+    chatId,
+    from,
+    vars,
+    flow,
+    templateCtx,
+    nextEdge: (nodeId, handle) => nextEdgeOf(flow, nodeId, handle),
+    resolveCredential: (id) => resolveCredential(bot.user_id, id),
+    setWait: (type, nodeId) => {
+      session.status = type === 'input' ? 'awaiting_input' : 'awaiting_callback';
+      session.node_id = nodeId;
+      session.pending = JSON.stringify({ type, nodeId, at: new Date().toISOString() });
+    },
+    finish: () => {
+      session.status = 'ended';
+      session.node_id = null;
+      session.pending = null;
+    },
+  };
+}
+
+async function runFrom(ctx, session, nodeId) {
+  let current = nodeId;
+  let steps = 0;
+  while (current) {
+    if (++steps > MAX_STEPS) {
+      ctx.log('error', `Flow exceeded ${MAX_STEPS} steps — possible infinite loop. Session ended.`);
+      session.status = 'ended';
+      session.node_id = null;
+      session.pending = null;
+      return;
+    }
+    const node = (ctx.flow.nodes || []).find((n) => n.id === current);
+    if (!node) {
+      ctx.log('warn', `Flow references missing node "${current}". Session paused.`);
+      session.status = 'idle';
+      return;
+    }
+    const executor = EXECUTORS[node.type];
+    if (!executor) {
+      ctx.log('warn', `Unknown node type "${node.type}" — skipped.`);
+      current = nextEdgeOf(ctx.flow, current);
+      continue;
+    }
+    session.node_id = node.id;
+    try {
+      const result = await executor(ctx, node);
+      if (result?.wait || result?.end) return;
+      current = result?.next || null;
+    } catch (err) {
+      ctx.log('error', `Node ${node.type} failed: ${err.message}`);
+      session.status = 'idle';
+      return;
+    }
+  }
+  // Ran out of edges: conversation idles until the next /start or message.
+  if (session.status !== 'ended') {
+    session.status = 'idle';
+    session.pending = null;
+  }
+}
+
+async function persistSession(session, vars, from) {
+  await db.upsertSession({
+    id: session.id,
+    bot_id: session.bot_id,
+    chat_id: session.chat_id,
+    user_json: JSON.stringify(from || {}),
+    node_id: session.node_id,
+    status: session.status,
+    variables: JSON.stringify(vars ?? {}),
+    pending: session.pending,
+    last_activity: new Date().toISOString(),
+    created_at: session.created_at,
+  });
+}
+
+function isSessionExpired(session) {
+  const ttlMs = config.sessionTtlHours * 3600 * 1000;
+  return Date.now() - new Date(session.last_activity).getTime() > ttlMs;
+}
+
+export async function handleUpdate({ bot, client, update, log }) {
+  const msg = update.message;
+  const cb = update.callback_query;
+  const chatId = msg?.chat?.id ?? cb?.message?.chat?.id;
+  if (!chatId) return;
+  const from = msg?.from ?? cb?.from ?? {};
+
+  const flow = bot.flow_published ? safeJson(bot.flow_published, null) : null;
+  if (!flow?.nodes?.length) {
+    log('warn', `Bot "${bot.name}" has no published flow — update ignored.`, chatId);
+    if (cb) await client.answerCallbackQuery(cb.id);
+    return;
+  }
+
+  // Load or create the chat session.
+  let session = await db.getSession(bot.id, String(chatId));
+  if (session && isSessionExpired(session)) session = null;
+  const now = new Date().toISOString();
+  if (!session) {
+    session = {
+      id: crypto.randomUUID(),
+      bot_id: bot.id,
+      chat_id: String(chatId),
+      node_id: null,
+      status: 'idle',
+      pending: null,
+      created_at: now,
+    };
+  }
+  const vars = safeJson(session.variables, {});
+  if (msg?.text != null) vars.text = msg.text;
+  const ctx = buildCtx({ bot, client, log, chatId: String(chatId), from, flow, session, vars });
+  const pending = safeJson(session.pending, null);
+
+  try {
+    if (msg?.text === '/start') {
+      const start = startNodeOf(flow);
+      session.status = 'idle';
+      session.pending = null;
+      if (start) await runFrom(ctx, session, start.id);
+    } else if (cb) {
+      await client.answerCallbackQuery(cb.id);
+      await handleCallback(ctx, session, vars, cb);
+    } else if (session.status === 'awaiting_input' && msg) {
+      await handleInput(ctx, session, vars, msg);
+    } else if (session.status === 'awaiting_callback' && msg) {
+      const node = (flow.nodes || []).find((n) => n.id === session.node_id);
+      const nudge = node?.data?.nudgeText?.trim() || 'Please tap one of the buttons above ⬆️ (or send /start to restart)';
+      await client.sendMessage(String(chatId), nudge);
+    } else if (msg) {
+      // Idle or ended conversation: any new message restarts the flow.
+      const start = startNodeOf(flow);
+      if (start) {
+        session.status = 'idle';
+        session.pending = null;
+        await runFrom(ctx, session, start.id);
+      }
+    }
+  } catch (err) {
+    log('error', `Update handling failed: ${err.message}`, chatId);
+  } finally {
+    await persistSession(session, vars, from);
+  }
+}
+
+async function handleCallback(ctx, session, vars, cb) {
+  const data = cb.data || '';
+  vars.last_callback = data;
+  const match = /^btn:([^:]+):(.+)$/.exec(data);
+  if (!match) {
+    ctx.log('warn', `Unknown callback payload "${data}".`);
+    return;
+  }
+  const [, nodeId, buttonId] = match;
+  const node = (ctx.flow.nodes || []).find((n) => n.id === nodeId);
+  if (!node) {
+    ctx.log('warn', `Callback references missing node "${nodeId}".`);
+    session.status = 'idle';
+    session.pending = null;
+    return;
+  }
+  const button = (node.data?.buttons || []).find((b) => b.id === buttonId);
+  ctx.log('info', `Button "${button?.label || buttonId}" pressed`);
+  vars.last_button = button?.label || '';
+  session.status = 'idle';
+  session.pending = null;
+  const next = ctx.nextEdge(nodeId, `btn-${buttonId}`) || ctx.nextEdge(nodeId);
+  await runFrom(ctx, session, next);
+}
+
+async function handleInput(ctx, session, vars, msg) {
+  const node = (ctx.flow.nodes || []).find((n) => n.id === session.node_id);
+  if (!node) {
+    session.status = 'idle';
+    session.pending = null;
+    return;
+  }
+  const d = node.data || {};
+  const text = (msg.text ?? '').trim();
+
+  // Escape hatch: /cancel exits the wait and optionally follows a cancel edge.
+  if (text === '/cancel') {
+    session.status = 'idle';
+    session.pending = null;
+    ctx.log('info', 'Input cancelled by user.');
+    const cancelNext = ctx.nextEdge(node.id, 'cancel');
+    if (cancelNext) await runFrom(ctx, session, cancelNext);
+    else if (d.cancelText) await ctx.client.sendMessage(ctx.chatId, d.cancelText);
+    return;
+  }
+
+  let valid = true;
+  if (d.validation === 'number') valid = text !== '' && !Number.isNaN(Number(text));
+  else if (d.validation === 'email') valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
+  else if (d.validation === 'regex' && d.pattern) {
+    try {
+      valid = new RegExp(d.pattern).test(text);
+    } catch {
+      valid = true;
+    }
+  }
+
+  if (!valid) {
+    const retry = d.retryText?.trim() || 'That doesn’t look right — please try again. (or /cancel)';
+    await ctx.client.sendMessage(ctx.chatId, retry);
+    return; // stay in awaiting_input state
+  }
+
+  const name = d.variable || 'input';
+  vars[name] = d.validation === 'number' ? Number(text) : text;
+  ctx.log('info', `Captured input → {{${name}}}`);
+  session.status = 'idle';
+  session.pending = null;
+  await runFrom(ctx, session, ctx.nextEdge(node.id) || null);
+}

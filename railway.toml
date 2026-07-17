@@ -1,0 +1,19 @@
+# Railway deployment config for telebot-builder.
+#
+# Railway keeps the process alive, so BOTH long-polling and webhook bot modes
+# work here. See README → "Deploy to Railway" for the one-time setup
+# (volume for SQLite persistence, generated domain).
+#
+# Docs: https://docs.railway.com/reference/config-as-code
+
+[build]
+builder = "NIXPACKS"
+# Installs server + client deps and produces client/dist for Express to serve.
+buildCommand = "npm run install:all && npm run build"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

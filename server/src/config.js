@@ -47,12 +47,22 @@ function loadSecrets() {
 
 const secrets = loadSecrets();
 
+// Webhook registration needs the platform public base URL. Set PUBLIC_BASE_URL
+// explicitly, or let hosting platforms that inject their public domain
+// (Railway, Render) fill it in automatically.
+const publicBaseUrl = (
+  process.env.PUBLIC_BASE_URL ||
+  (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
+  process.env.RENDER_EXTERNAL_URL ||
+  ''
+).replace(/\/+$/, '');
+
 export const config = {
   env: process.env.NODE_ENV || 'development',
   isServerless: isServerlessHost,
   isVercel: Boolean(process.env.VERCEL),
   port: Number(process.env.PORT || 4000),
-  publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
+  publicBaseUrl,
   jwtSecret: secrets.jwtSecret,
   jwtExpiresIn: '7d',
   platformSecret: secrets.platformSecret,

@@ -62,8 +62,10 @@ if (isMain) {
     console.log(`[server] ${fs.existsSync(config.clientDist) ? 'Serving built client.' : 'Client not built — run "npm run dev:client" or "npm run build".'}`);
     if (config.useSupabase) console.log('[server] Supabase persistence enabled.');
     await initManager();
-    if (!config.publicBaseUrl) {
-      console.log('[server] PUBLIC_BASE_URL not set — webhook mode unavailable, polling works fine.');
+    if (config.publicBaseUrl) {
+      console.log(`[server] Webhook base URL: ${config.publicBaseUrl}`);
+    } else {
+      console.log('[server] No public base URL detected — webhook mode unavailable, polling works fine.');
     }
   });
 

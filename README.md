@@ -114,10 +114,30 @@ Deploys then register `https://…/webhooks/telegram/<botId>/<secret>` with Tele
 
 ### Want polling bots too? Split hosting
 
-Keep the **frontend on Vercel** and host the **backend on a persistent server** (Railway / Render / Fly.io / any VPS, where both polling and webhook modes work with SQLite or Supabase):
+Keep the **frontend on Vercel** and host the **backend on a persistent server** — ready-made configs are included (see below): [`railway.toml`](railway.toml) for Railway, [`render.yaml`](render.yaml) for Render (both polling and webhook modes work there, with SQLite or Supabase):
 
-1. Deploy this repo to Railway/Render — start command `npm start` (after `npm run build`), it serves the whole app. You can even just use THAT full deployment and skip Vercel entirely.
+1. Deploy this repo to Railway/Render — full app served from one process (`npm start`). You can even just use THAT full deployment and skip Vercel entirely.
 2. If you still prefer Vercel for the frontend: deploy with build env `VITE_API_URL=https://your-backend-host` — the client ([`src/api.js`](client/src/api.js)) then points all API calls there. CORS on the backend is already open.
+
+## 🚂 Deploy to Railway (polling ✅ + webhook ✅)
+
+Railway keeps the process alive, so **both bot modes work**. The included [`railway.toml`](railway.toml) configures the build (`npm run install:all && npm run build`), start command, `/api/health` healthcheck and restart policy; Node 22 comes from `engines` in `package.json`.
+
+1. **Railway → New Project → Deploy from GitHub repo.** That's the build/start done.
+2. **Persist SQLite:** service → **Volumes → + New Volume**, mount path `/data`, then add env var `DATA_DIR=/data`. *(Skip this if you use Supabase instead — set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`.)*
+3. **Secrets (recommended):** add env vars `JWT_SECRET` and `PLATFORM_SECRET`. If omitted, random ones are generated into `.data/secrets.json` (persisted via the volume when step 2 is done — fine, but env vars are more robust).
+4. **Public domain:** service → **Settings → Networking → Generate Domain**. Railway injects it as `RAILWAY_PUBLIC_DOMAIN`, which the server **auto-detects** as the webhook base URL — zero extra config for webhook deploys. Custom domains work the same way (set `PUBLIC_BASE_URL` to override).
+
+> ⚠️ Without a volume, SQLite data lives on the ephemeral container filesystem and is wiped on every redeploy — you'll lose accounts/bots. Do step 2, or use Supabase.
+
+## 🎨 Deploy to Render (polling ✅ + webhook ✅)
+
+Render also keeps the process alive. The included [`render.yaml`](render.yaml) **Blueprint** provisions everything in one click:
+
+1. **Render Dashboard → New → Blueprint** → select this repo.
+2. Blueprint creates: a Node 22 web service (build `npm run install:all && npm run build`, start `npm start`, healthcheck `/api/health`), a **1 GB persistent disk** mounted at `/var/telebot/data` (wired via `DATA_DIR`), and auto-generated `JWT_SECRET` / `PLATFORM_SECRET` values.
+3. **Public URL:** Render injects `RENDER_EXTERNAL_URL`, auto-detected by the server — webhook bots register against it with no manual setup.
+4. The Blueprint defaults to the **starter** plan on purpose: the free tier has no persistent disks (SQLite wouldn't survive restarts) and sleeps when idle (which pauses polling bots). Prefer diskless + free? Go Supabase instead by uncommenting `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` in `render.yaml` and removing the disk.
 
 ## 🏗 Architecture
 

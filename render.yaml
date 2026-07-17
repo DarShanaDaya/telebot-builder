@@ -1,0 +1,42 @@
+# Render Blueprint for telebot-builder.
+#
+# Render keeps the process alive, so BOTH long-polling and webhook bot modes
+# work here. Webhook mode needs no extra config: Render auto-injects
+# RENDER_EXTERNAL_URL which the server auto-detects as its public base URL.
+#
+# Deploy: Render Dashboard → New → Blueprint → select this repo.
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: telebot-builder
+    runtime: node
+    # NOTE: SQLite needs a persistent disk, and sleeping free services pause
+    # polling bots — hence starter as the minimum sensible plan. Prefer
+    # Postgres? Leave the disk attached anyway or switch to Supabase env vars.
+    plan: starter
+    buildCommand: npm run install:all && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: JWT_SECRET # generated once by Render on first deploy
+        generateValue: true
+      - key: PLATFORM_SECRET # encrypts bot tokens + credentials
+        generateValue: true
+      - key: SESSION_TTL_HOURS
+        value: "24"
+      # Points the app at the persistent disk below (decoupled from source path).
+      - key: DATA_DIR
+        value: /var/telebot/data
+      # --- Optional: use Supabase Postgres instead of SQLite ---------------
+      # - key: SUPABASE_URL
+      #   sync: false
+      # - key: SUPABASE_SERVICE_ROLE_KEY
+      #   sync: false
+      # PUBLIC_BASE_URL is intentionally omitted: RENDER_EXTERNAL_URL is used.
+    disk:
+      name: telebot-data
+      mountPath: /var/telebot/data
+      sizeGB: 1

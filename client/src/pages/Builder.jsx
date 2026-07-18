@@ -67,7 +67,16 @@ export default function Builder() {
         setBot(botRes.data.bot);
         setCredentials(credRes.data.credentials);
         const flow = flowRes.data.draft || flowRes.data.published || { nodes: [{ id: 'start-1', type: 'start', position: { x: 80, y: 140 }, data: {} }], edges: [] };
-        const { nodes: n, edges: e, viewport } = fromStored(flow);
+        let { nodes: n, edges: e, viewport } = fromStored(flow);
+        // Resolve multiple-start bug: keep only the first Start node found
+        const startNodes = n.filter((nn) => nn.data?.nodeType === 'start');
+        if (startNodes.length > 1) {
+          const keepId = startNodes[0].id;
+          n = n.filter((nn) => nn.data?.nodeType !== 'start' || nn.id === keepId);
+          // also prune edges to removed starts
+          const removed = startNodes.slice(1).map((s) => s.id);
+          e = e.filter((ee) => !removed.includes(ee.source) && !removed.includes(ee.target));
+        }
         setNodes(n);
         setEdges(e);
         viewportRef.current = viewport || null;
@@ -99,7 +108,14 @@ export default function Builder() {
     if (!nodeType || !rfInstance) return;
     const bounds = wrapperRef.current.getBoundingClientRect();
     const position = rfInstance.project({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
-    if (nodeType !== 'start' && !nodes.some((n) => n.data.nodeType === 'start')) {
+    if (nodeType === 'start') {
+      const existingStart = nodes.find((n) => n.data.nodeType === 'start');
+      if (existingStart) {
+        // Prevent multiple starts: select the existing one instead
+        setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === existingStart.id })));
+        return;
+      }
+    } else if (!nodes.some((n) => n.data.nodeType === 'start')) {
       // Auto-seed a Start node so flows are always runnable.
       setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: position.x - 260, y: position.y }, data: { nodeType: 'start' } }));
     }
@@ -113,7 +129,13 @@ export default function Builder() {
     const bounds = wrapperRef.current.getBoundingClientRect();
     const center = rfInstance.project({ x: bounds.width / 2 - 320, y: bounds.height / 2 });
     const jitter = (Math.random() - 0.5) * 60;
-    if (nodeType !== 'start' && !nodes.some((n) => n.data.nodeType === 'start')) {
+    if (nodeType === 'start') {
+      const existingStart = nodes.find((n) => n.data.nodeType === 'start');
+      if (existingStart) {
+        setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === existingStart.id })));
+        return;
+      }
+    } else if (!nodes.some((n) => n.data.nodeType === 'start')) {
       setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: center.x - 280, y: center.y }, data: { nodeType: 'start' } }));
     }
     const node = { id: newId(), type: 'tb', position: { x: center.x + jitter, y: center.y + jitter }, selected: true, data: { ...defaultData(nodeType), nodeType } };
@@ -137,7 +159,14 @@ export default function Builder() {
 
   const collectFlow = () => {
     const vp = rfInstance ? { x: rfInstance.getViewport().x, y: rfInstance.getViewport().y, zoom: rfInstance.getViewport().zoom } : viewportRef.current;
-    return toStored(nodes, edges, vp);
+    // Ensure at most one Start node (keep the first one by id order)
+    let cleanNodes = nodes;
+    const starts = nodes.filter((n) => n.data?.nodeType === 'start');
+    if (starts.length > 1) {
+      const keep = starts[0];
+      cleanNodes = nodes.filter((n) => n.data?.nodeType !== 'start' || n.id === keep.id);
+    }
+    return toStored(cleanNodes, edges, vp);
   };
 
   const saveDraft = async () => {

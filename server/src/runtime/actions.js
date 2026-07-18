@@ -172,7 +172,26 @@ async function execAi(ctx, node) {
   const model = d.model || credential.data.model || 'gpt-4o-mini';
   const messages = [];
   if (d.system) messages.push({ role: 'system', content: renderTemplate(d.system, tctx) });
-  messages.push({ role: 'user', content: renderTemplate(d.prompt || '{{text}}', tctx) });
+
+  let userPrompt = renderTemplate(d.prompt || '{{text}}', tctx);
+  if (d.knowledgeBase && d.knowledgeBase.trim()) {
+    const kb = renderTemplate(d.knowledgeBase, tctx);
+    const fmt = (d.kbFormat || 'markdown').toLowerCase();
+    let kbBlock = '';
+    if (fmt === 'json') {
+      kbBlock = `\n\n--- KNOWLEDGE BASE (JSON) ---\n${kb}\n--- END KB ---`;
+    } else if (fmt === 'plain') {
+      kbBlock = `\n\n--- KNOWLEDGE BASE ---\n${kb}\n--- END KB ---`;
+    } else if (fmt === 'custom') {
+      kbBlock = `\n\n[KNOWLEDGE BASE]\n${kb}\n[/KNOWLEDGE BASE]`;
+    } else {
+      // markdown (default) or trusted
+      kbBlock = `\n\n--- KNOWLEDGE BASE ---\n${kb}\n--- END KB ---`;
+    }
+    userPrompt = `${userPrompt}${kbBlock}`;
+  }
+
+  messages.push({ role: 'user', content: userPrompt });
   await ctx.client.sendChatAction(ctx.chatId);
   try {
     const { data: resp } = await axios.post(

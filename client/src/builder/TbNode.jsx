@@ -32,10 +32,13 @@ function ButtonsHandles({ buttons }) {
 }
 
 function TbNode({ id, type, data, selected }) {
-  const def = NODE_DEFS[type] || { label: type, icon: '❓', color: '#666' };
-  const isStart = type === 'start';
-  const showOut = !['end', 'buttons'].includes(type);
-  const dualOut = type === 'http' || type === 'ai';
+  // The actual node type is stored in data.nodeType (e.g., 'start', 'message', 'buttons', etc.)
+  // while `type` is the React Flow custom node type ('tb')
+  const nodeType = data?.nodeType || 'unknown';
+  const def = NODE_DEFS[nodeType] || { label: nodeType, icon: '❓', color: '#666' };
+  const isStart = nodeType === 'start';
+  const showOut = !['end', 'buttons'].includes(nodeType);
+  const dualOut = nodeType === 'http' || nodeType === 'ai';
 
   return (
     <div className={`tb-node ${selected ? 'selected' : ''}`} style={{ '--node-color': def.color }}>
@@ -44,9 +47,9 @@ function TbNode({ id, type, data, selected }) {
         <span className="tb-node-icon">{def.icon}</span>
         <span className="tb-node-title">{def.label}</span>
       </div>
-      <div className="tb-node-summary">{summarize({ type, data })}</div>
-      {type === 'buttons' && <ButtonsHandles buttons={data?.buttons} />}
-      {type === 'condition' && (
+      <div className="tb-node-summary">{summarize({ type: nodeType, data })}</div>
+      {nodeType === 'buttons' && <ButtonsHandles buttons={data?.buttons} />}
+      {nodeType === 'condition' && (
         <div className="tb-dual">
           <div className="tb-dual-row">
             <span className="tb-tag true">true</span>
@@ -61,8 +64,8 @@ function TbNode({ id, type, data, selected }) {
       {dualOut && (
         <div className="tb-dual">
           <div className="tb-dual-row">
-            <span className="tb-tag true">{type === 'http' ? '✓ ok' : 'out'}</span>
-            <Handle type="source" position={Position.Right} id={type === 'http' ? 'success' : 'out'} style={{ top: HANDLE_OFFSET + 28 }} />
+            <span className="tb-tag true">{nodeType === 'http' ? '✓ ok' : 'out'}</span>
+            <Handle type="source" position={Position.Right} id={nodeType === 'http' ? 'success' : 'out'} style={{ top: HANDLE_OFFSET + 28 }} />
           </div>
           <div className="tb-dual-row">
             <span className="tb-tag false">✗ error</span>
@@ -70,7 +73,7 @@ function TbNode({ id, type, data, selected }) {
           </div>
         </div>
       )}
-      {type === 'input' && (
+      {nodeType === 'input' && (
         <div className="tb-dual">
           <div className="tb-dual-row">
             <span className="tb-tag true">answered</span>
@@ -82,7 +85,7 @@ function TbNode({ id, type, data, selected }) {
           </div>
         </div>
       )}
-      {showOut && !dualOut && type !== 'input' && <Handle type="source" position={Position.Right} id="out" />}
+      {showOut && !dualOut && nodeType !== 'input' && <Handle type="source" position={Position.Right} id="out" />}
     </div>
   );
 }

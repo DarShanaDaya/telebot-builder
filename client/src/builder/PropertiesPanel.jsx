@@ -79,7 +79,10 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
       </aside>
     );
   }
-  const def = NODE_DEFS[node.type] || {};
+  // The actual node type is stored in node.data.nodeType (e.g., 'start', 'message', 'buttons', etc.)
+  // while node.type is the React Flow custom node type ('tb')
+  const nodeType = node.data?.nodeType || 'unknown';
+  const def = NODE_DEFS[nodeType] || {};
   const d = node.data || {};
 
   return (
@@ -93,11 +96,11 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
       </div>
 
       <div className="props-body">
-        {node.type === 'start' && (
+        {nodeType === 'start' && (
           <p className="field-hint">The flow starts here when a user sends <code>/start</code>, or messages a bot whose conversation has ended.</p>
         )}
 
-        {node.type === 'message' && (
+        {nodeType === 'message' && (
           <>
             <Field label="Message text" hint="HTML tags like <b> and <i> are supported.">
               <textarea rows={5} value={d.text || ''} onChange={(e) => set(d, onChange, 'text', e.target.value)} placeholder="Hello {{first_name}}!" />
@@ -108,7 +111,7 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
           </>
         )}
 
-        {node.type === 'buttons' && (
+        {nodeType === 'buttons' && (
           <>
             <Field label="Question text">
               <textarea rows={3} value={d.text || ''} onChange={(e) => set(d, onChange, 'text', e.target.value)} />
@@ -122,7 +125,7 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
           </>
         )}
 
-        {node.type === 'input' && (
+        {nodeType === 'input' && (
           <>
             <Field label="Prompt">
               <textarea rows={3} value={d.prompt || ''} onChange={(e) => set(d, onChange, 'prompt', e.target.value)} />
@@ -152,7 +155,7 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
           </>
         )}
 
-        {node.type === 'condition' && (
+        {nodeType === 'condition' && (
           <>
             <Field label="Left value" hint="Usually a variable, e.g. {{answer}}">
               <input value={d.left || ''} onChange={(e) => set(d, onChange, 'left', e.target.value)} />
@@ -171,7 +174,7 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
           </>
         )}
 
-        {node.type === 'setvar' && (
+        {nodeType === 'setvar' && (
           <>
             <Field label="Variable name">
               <input value={d.name || ''} onChange={(e) => set(d, onChange, 'name', e.target.value.replace(/\s/g, '_'))} />
@@ -186,7 +189,7 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
           </>
         )}
 
-        {node.type === 'http' && (
+        {nodeType === 'http' && (
           <>
             <div className="row-2">
               <Field label="Method">
@@ -227,7 +230,7 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
           </>
         )}
 
-        {node.type === 'ai' && (
+        {nodeType === 'ai' && (
           <>
             <Field label="OpenAI credential">
               <CredentialSelect credentials={credentials} filterType="openai" value={d.credentialId} onChange={(v) => set(d, onChange, 'credentialId', v)} />
@@ -251,19 +254,19 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
           </>
         )}
 
-        {node.type === 'delay' && (
+        {nodeType === 'delay' && (
           <Field label="Seconds" hint="1–600">
             <input type="number" min={1} max={600} value={d.seconds || 1} onChange={(e) => set(d, onChange, 'seconds', Number(e.target.value))} />
           </Field>
         )}
 
-        {node.type === 'end' && (
+        {nodeType === 'end' && (
           <Field label="Goodbye text (optional)">
             <textarea rows={3} value={d.text || ''} onChange={(e) => set(d, onChange, 'text', e.target.value)} placeholder="Thanks for chatting! Send /start anytime to begin again." />
           </Field>
         )}
 
-        {!['start', 'end'].includes(node.type) && (
+        {!['start', 'end'].includes(nodeType) && (
           <button className="btn danger sm block" onClick={() => onDelete(node)}>Delete node</button>
         )}
       </div>

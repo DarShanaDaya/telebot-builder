@@ -56,7 +56,7 @@ export const NODE_DEFS = {
     label: 'AI Reply',
     icon: '🤖',
     color: '#10b981',
-    description: 'Generate a reply with OpenAI (uses an OpenAI credential).',
+    description: 'Generate a reply with OpenAI (uses an OpenAI credential). Optionally reference a custom knowledge base.',
   },
   delay: {
     type: 'delay',
@@ -114,7 +114,7 @@ export function summarize(node) {
     case 'http':
       return `${d.method || 'GET'} ${trim(d.url, 32)}` || 'No URL set';
     case 'ai':
-      return trim(d.prompt, 40) || 'Prompt not set';
+      return (trim(d.prompt, 40) || 'Prompt not set') + (d.knowledgeBase ? ' + KB' : '');
     case 'delay':
       return `wait ${d.seconds || 1}s`;
     case 'end':
@@ -140,7 +140,7 @@ export function defaultData(type) {
     case 'http':
       return { method: 'GET', url: '', headers: [], body: '', bodyType: 'json', timeoutMs: 15000, saveAs: 'api_result', credentialId: '' };
     case 'ai':
-      return { credentialId: '', model: '', system: '', prompt: '{{text}}', temperature: 0.7, maxTokens: 600, saveAs: '', sendReply: true };
+      return { credentialId: '', model: '', system: '', prompt: '{{text}}', temperature: 0.7, maxTokens: 600, saveAs: '', sendReply: true, knowledgeBase: '', kbFormat: 'markdown' };
     case 'delay':
       return { seconds: 2 };
     case 'end':

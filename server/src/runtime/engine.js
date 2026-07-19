@@ -278,9 +278,10 @@ async function handleCallback(ctx, session, vars, cb) {
   const [, nodeId, buttonId] = match;
   const node = (ctx.flow.nodes || []).find((n) => n.id === nodeId);
   if (!node) {
-    ctx.log('warn', `Callback references missing node "${nodeId}".`);
-    session.status = 'idle';
-    session.pending = null;
+    // Published flows can change while an old Telegram inline keyboard remains
+    // visible. A missing node is a stale callback, never a reason to clear the
+    // active wait or restart the conversation.
+    ctx.log('warn', `Ignored callback for missing node "${nodeId}".`);
     return;
   }
   // A callback is valid only for the button node the current session is

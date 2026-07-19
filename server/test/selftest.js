@@ -187,6 +187,12 @@ console.log('\n■ flow engine (mock transport)');
   session = await db.getSession(botRow.id, '555');
   check('stale callback cannot advance an input wait', session.status === 'awaiting_input' && session.node_id === 'input-1');
 
+  // A keyboard from a pre-publish flow can reference a node that no longer
+  // exists. It must be ignored without clearing the active wait.
+  await run(cb(555, 'btn:removed-node:old-button', 32));
+  session = await db.getSession(botRow.id, '555');
+  check('missing-node callback cannot clear an active wait', session.status === 'awaiting_input' && session.node_id === 'input-1');
+
   await run(msg(555, 'not-a-number', 4));
   check('invalid input retries', sent[sent.length - 1].text === 'Numbers only!');
   session = await db.getSession(botRow.id, '555');

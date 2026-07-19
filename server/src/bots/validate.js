@@ -3,7 +3,11 @@
 
 import { config } from '../config.js';
 
-const EXPERIMENTAL_NODE_TYPES = new Set(['function', 'parallel', 'webhook']);
+const EXPERIMENTAL_NODE_CAPABILITY = {
+  function: 'allowExperimentalFunctionNodes',
+  parallel: 'allowExperimentalParallelNodes',
+  webhook: 'allowExperimentalWebhookNodes',
+};
 const REFERENCE_NAME_RE = /^[A-Za-z][\w-]*$/;
 
 const isReferenceName = (value) => typeof value === 'string' && REFERENCE_NAME_RE.test(value.trim());
@@ -86,7 +90,8 @@ export function validateFlow(flow) {
   for (const node of nodes) {
     const d = node.data || {};
     const at = label(node);
-    if (EXPERIMENTAL_NODE_TYPES.has(node.type) && !config.allowExperimentalNodes) {
+    const capability = EXPERIMENTAL_NODE_CAPABILITY[node.type];
+    if (capability && !config[capability]) {
       errors.push(`${at} nodes are disabled until their production execution model is available.`);
       continue;
     }
@@ -162,7 +167,7 @@ export function validateFlow(flow) {
         break;
       }
       default:
-        if (!['end'].includes(node.type)) warnings.push(`Unknown node type "${node.type}".`);
+        if (!['end'].includes(node.type)) errors.push(`Unsupported node type "${node.type}".`);
     }
   }
 

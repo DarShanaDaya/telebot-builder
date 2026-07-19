@@ -21,7 +21,16 @@ export function buildApp() {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, db: db.provider, time: new Date().toISOString() });
+    res.json({
+      ok: true,
+      db: db.provider,
+      time: new Date().toISOString(),
+      capabilities: {
+        experimentalParallel: config.allowExperimentalParallelNodes,
+        experimentalWebhook: config.allowExperimentalWebhookNodes,
+        experimentalFunction: config.allowExperimentalFunctionNodes,
+      },
+    });
   });
   app.use('/api/auth', authRouter());
   app.use('/api/bots', botsRouter());

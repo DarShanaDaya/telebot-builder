@@ -51,6 +51,17 @@ function safeJson(text, fallback = {}) {
 
 const isReferenceName = (value) => /^[A-Za-z][\w-]*$/.test(String(value || ''));
 
+function safeFailureCode(err, fallback = 'node_execution_failed') {
+  const candidate = typeof err?.code === 'string' ? err.code : '';
+  return /^[a-z][a-z0-9_-]{0,63}$/i.test(candidate) ? candidate.toLowerCase() : fallback;
+}
+
+function markFailed(session, nodeId, type, code) {
+  session.status = 'failed';
+  session.node_id = nodeId || null;
+  session.pending = JSON.stringify({ type, nodeId: nodeId || null, code, at: new Date().toISOString() });
+}
+
 function recordNodeValue(vars, node, valueName, value, { replace = false, selected } = {}) {
   const nodeName = node?.data?.nodeName;
   if (!isReferenceName(nodeName) || !isReferenceName(valueName)) return false;
@@ -121,9 +132,7 @@ async function runFrom(ctx, session, nodeId) {
   while (current) {
     if (++steps > MAX_STEPS) {
       ctx.log('error', `Flow exceeded ${MAX_STEPS} synchronous steps — possible infinite loop. Session paused.`);
-      session.status = 'failed';
-      session.node_id = current;
-      session.pending = JSON.stringify({ type: 'step_limit', nodeId: current, at: new Date().toISOString() });
+      markFailed(session, current, 'step_limit', 'flow_step_limit');
       try {
         await ctx.client.sendMessage(ctx.chatId, 'This conversation reached a safety limit. Please send /start to try again.');
       } catch {
@@ -139,9 +148,14 @@ async function runFrom(ctx, session, nodeId) {
     }
     const executor = EXECUTORS[node.type];
     if (!executor) {
-      ctx.log('warn', `Unknown node type "${node.type}" — skipped.`);
-      current = nextEdgeOf(ctx.flow, current);
-      continue;
+      ctx.log('error', `Unsupported node type "${node.type}" at ${node.id}.`);
+      markFailed(session, node.id, 'unsupported_node', 'unsupported_node_type');
+      try {
+        await ctx.client.sendMessage(ctx.chatId, 'This conversation uses an unsupported step. Please contact the bot owner.');
+      } catch {
+        // Preserve the failed state even when the transport is unavailable.
+      }
+      return;
     }
     session.node_id = node.id;
     try {
@@ -149,12 +163,11 @@ async function runFrom(ctx, session, nodeId) {
       if (result?.wait || result?.end) return;
       current = result?.next || null;
     } catch (err) {
-      ctx.log('error', `Node ${node.type} failed: ${err.message}`);
+      const code = safeFailureCode(err);
+      ctx.log('error', `Node ${node.type} failed (${code}).`);
       // Do not silently turn an execution failure into an idle conversation:
       // the next arbitrary user message must not restart and duplicate work.
-      session.status = 'failed';
-      session.node_id = node.id;
-      session.pending = JSON.stringify({ type: 'error', nodeId: node.id, message: String(err.message).slice(0, 500), at: new Date().toISOString() });
+      markFailed(session, node.id, 'error', code);
       try {
         await ctx.client.sendMessage(ctx.chatId, 'Sorry — something went wrong. Please send /start to try again.');
       } catch {
@@ -241,6 +254,11 @@ export async function handleUpdate({ bot, client, update, log }) {
       session.status = 'idle';
       session.pending = null;
       if (start) await runFrom(ctx, session, start.id);
+    } else if (msg?.text === '/retry' && session.status === 'failed' && session.node_id) {
+      const failedNodeId = session.node_id;
+      session.status = 'idle';
+      session.pending = null;
+      await runFrom(ctx, session, failedNodeId);
     } else if (cb) {
       await client.answerCallbackQuery(cb.id);
       await handleCallback(ctx, session, vars, cb);
@@ -259,7 +277,7 @@ export async function handleUpdate({ bot, client, update, log }) {
         await runFrom(ctx, session, start.id);
       }
     } else if (msg && session.status === 'failed') {
-      await client.sendMessage(String(chatId), 'This conversation is paused after an error. Send /start to restart it.');
+      await client.sendMessage(String(chatId), 'This conversation is paused after an error. Send /retry to try the failed step again, or /start to restart.');
     }
   } catch (err) {
     log('error', `Update handling failed: ${err.message}`, chatId);

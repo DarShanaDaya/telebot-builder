@@ -47,6 +47,12 @@ function loadSecrets() {
 
 const secrets = loadSecrets();
 
+export function boundedPositiveInteger(value, fallback, { min = 1, max = 10000 } = {}) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) return fallback;
+  return parsed;
+}
+
 // Webhook registration needs the platform public base URL. Set PUBLIC_BASE_URL
 // explicitly, or let hosting platforms that inject their public domain
 // (Railway, Render) fill it in automatically.
@@ -80,11 +86,14 @@ export const config = {
   // A per-update safety ceiling. Waiting nodes yield execution, so this does
   // not limit total conversation length; it prevents accidental synchronous
   // cycles from monopolizing a worker.
-  maxFlowStepsPerUpdate: Math.max(1, Number(process.env.MAX_FLOW_STEPS_PER_UPDATE || 500)),
+  maxFlowStepsPerUpdate: boundedPositiveInteger(process.env.MAX_FLOW_STEPS_PER_UPDATE, 500, { min: 1, max: 5000 }),
   maxHttpTimeoutMs: 30000,
   maxDelaySeconds: 600,
   logRetentionPerBot: 500,
-  // Function, Parallel and custom Webhook nodes are intentionally opt-in
-  // while their durable execution/security model is completed.
-  allowExperimentalNodes: process.env.ALLOW_EXPERIMENTAL_NODES === 'true',
+  // Function code is never enabled in production. Other incomplete nodes are
+  // individually opt-in only outside production, so enabling one capability
+  // cannot accidentally enable a different unsafe feature.
+  allowExperimentalFunctionNodes: false,
+  allowExperimentalParallelNodes: process.env.NODE_ENV !== 'production' && process.env.ALLOW_EXPERIMENTAL_PARALLEL_NODES === 'true',
+  allowExperimentalWebhookNodes: process.env.NODE_ENV !== 'production' && process.env.ALLOW_EXPERIMENTAL_WEBHOOK_NODES === 'true',
 };

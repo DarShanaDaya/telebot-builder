@@ -18,6 +18,7 @@ const check = (name, cond, extra = '') => {
 // ---- imports (after env is set) -------------------------------------------
 const { encryptString, decryptString, maskSecrets } = await import('../src/lib/crypto.js');
 const { renderTemplate, evaluateCondition } = await import('../src/lib/template.js');
+const { boundedPositiveInteger } = await import('../src/config.js');
 const { db } = await import('../src/db/index.js');
 const { buildApp } = await import('../src/index.js');
 const { handleUpdate, makeBotLogger } = await import('../src/runtime/engine.js');
@@ -34,6 +35,11 @@ console.log('\n■ crypto & templating');
   check('triple-brace node reference renders namespaced value', renderTemplate('{{{plan.standard}}}', { _nodeValues: { plan: { standard: 'standard' } } }) === 'standard');
   check('condition gt', evaluateCondition({ left: '{{num}}', op: 'gt', right: '10' }, { num: 15 }) === true);
   check('condition contains', evaluateCondition({ left: 'hello world', op: 'contains', right: 'WORLD' }, {}) === true);
+  check('step guard config rejects invalid values',
+    boundedPositiveInteger('abc', 500, { min: 1, max: 5000 }) === 500
+    && boundedPositiveInteger('Infinity', 500, { min: 1, max: 5000 }) === 500
+    && boundedPositiveInteger('0', 500, { min: 1, max: 5000 }) === 500
+    && boundedPositiveInteger('501', 500, { min: 1, max: 5000 }) === 501);
 }
 
 // ---- API + engine -----------------------------------------------------------
@@ -133,6 +139,12 @@ console.log('\n■ REST API');
   invalidReferenceFlow.nodes.find((n) => n.id === 'input-1').data.variable = 'invalid.name';
   const invalidReference = await api('POST', `/api/bots/${botId}/flow/publish`, { flow: invalidReferenceFlow }, token);
   check('publish rejects invalid named-value identifiers', invalidReference.status === 422);
+
+  const unsupportedNodeFlow = structuredClone(flow);
+  unsupportedNodeFlow.nodes.push({ id: 'unknown-1', type: 'future_node', position: { x: 0, y: 0 }, data: {} });
+  unsupportedNodeFlow.edges.push({ id: 'e-unknown', source: 'msg-small', target: 'unknown-1' });
+  const unsupportedNode = await api('POST', `/api/bots/${botId}/flow/publish`, { flow: unsupportedNodeFlow }, token);
+  check('publish rejects unsupported node types', unsupportedNode.status === 422);
 
   // Ownership isolation
   const reg2 = await api('POST', '/api/auth/register', { email: 'eve@example.com', password: 'password123' });

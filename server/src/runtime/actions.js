@@ -319,7 +319,7 @@ async function execSwitch(ctx, node) {
 
 async function execFunction(ctx, node) {
   const d = node.data || {};
-  if (!config.allowExperimentalNodes) {
+  if (!config.allowExperimentalFunctionNodes) {
     ctx.log('error', `Function node ${node.id} is disabled until isolated code execution is available.`);
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
@@ -370,7 +370,7 @@ async function execFunction(ctx, node) {
 }
 
 async function execParallel(ctx, node) {
-  if (!config.allowExperimentalNodes) {
+  if (!config.allowExperimentalParallelNodes) {
     ctx.log('error', `Parallel node ${node.id} is disabled until durable branch orchestration is available.`);
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
@@ -423,7 +423,7 @@ async function execParallel(ctx, node) {
 }
 
 async function execWebhook(ctx, node) {
-  if (!config.allowExperimentalNodes) {
+  if (!config.allowExperimentalWebhookNodes) {
     ctx.log('error', `Webhook node ${node.id} is disabled until external webhook routing is available.`);
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }

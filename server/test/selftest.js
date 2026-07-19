@@ -164,6 +164,8 @@ console.log('\n■ REST API');
   check('other users cannot see the bot', stolen.status === 404);
 
   botRow = await db.getBot(botId);
+  check('processed update claim de-duplicates delivery IDs',
+    await db.claimUpdate(botId, 'test-update-1') === true && await db.claimUpdate(botId, 'test-update-1') === false);
 }
 
 // ---- engine walk-through with a mock Telegram client ------------------------

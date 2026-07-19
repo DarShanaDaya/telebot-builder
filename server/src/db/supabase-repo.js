@@ -89,6 +89,15 @@ export function createSupabaseRepo({ url, serviceKey }) {
       return unwrap(sb.from('sessions').select('*').eq('bot_id', botId).order('last_activity', { ascending: false }), 'listSessions');
     },
 
+    // ---- update de-duplication -----------------------------------------
+    async claimUpdate(botId, updateId) {
+      const { error } = await sb.from('processed_updates').insert({ bot_id: botId, update_id: String(updateId), created_at: new Date().toISOString() });
+      if (!error) return true;
+      // PostgreSQL unique_violation: this Telegram update was already claimed.
+      if (error.code === '23505') return false;
+      throw new Error(`Supabase (claimUpdate): ${error.message}`);
+    },
+
     // ---- logs ----------------------------------------------------------
     async addLog(entry) {
       await unwrap(

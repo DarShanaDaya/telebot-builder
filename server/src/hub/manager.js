@@ -41,6 +41,12 @@ export function processUpdate(botId, update) {
 async function dispatchUpdate(botId, update) {
   const bot = await db.getBot(botId);
   if (!bot || bot.status !== 'running') return;
+  // Telegram can redeliver webhook/polling updates. Claim the platform update
+  // before executing side effects so duplicate deliveries do not replay a flow.
+  if (update?.update_id != null) {
+    const claimed = await db.claimUpdate(botId, update.update_id);
+    if (!claimed) return;
+  }
   const inst = instances.get(botId);
   let client = inst?.client;
   if (!client) {

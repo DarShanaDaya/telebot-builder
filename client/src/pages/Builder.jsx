@@ -10,7 +10,7 @@ import ReactFlow, {
   useEdgesState,
 } from 'reactflow';
 import { api, apiError } from '../api';
-import { NODE_DEFS, PALETTE, defaultData } from '../builder/nodeDefs';
+import { NODE_DEFS, PALETTE, defaultData, NODE_CATEGORIES } from '../builder/nodeDefs';
 import TbNode from '../builder/TbNode';
 import PropertiesPanel from '../builder/PropertiesPanel';
 
@@ -56,6 +56,13 @@ export default function Builder() {
   const [loaded, setLoaded] = useState(false);
   const viewportRef = useRef(null);
 
+  // Palette state
+  const [expandedCategories, setExpandedCategories] = useState(() => {
+    // Default: expand core and logic, collapse others
+    return new Set(['core', 'logic']);
+  });
+  const [paletteSearch, setPaletteSearch] = useState('');
+
   const showToast = (msg, kind = 'ok') => {
     setToast({ msg, kind });
     setTimeout(() => setToast(null), 3200);
@@ -67,16 +74,7 @@ export default function Builder() {
         setBot(botRes.data.bot);
         setCredentials(credRes.data.credentials);
         const flow = flowRes.data.draft || flowRes.data.published || { nodes: [{ id: 'start-1', type: 'start', position: { x: 80, y: 140 }, data: {} }], edges: [] };
-        let { nodes: n, edges: e, viewport } = fromStored(flow);
-        // Resolve multiple-start bug: keep only the first Start node found
-        const startNodes = n.filter((nn) => nn.data?.nodeType === 'start');
-        if (startNodes.length > 1) {
-          const keepId = startNodes[0].id;
-          n = n.filter((nn) => nn.data?.nodeType !== 'start' || nn.id === keepId);
-          // also prune edges to removed starts
-          const removed = startNodes.slice(1).map((s) => s.id);
-          e = e.filter((ee) => !removed.includes(ee.source) && !removed.includes(ee.target));
-        }
+        const { nodes: n, edges: e, viewport } = fromStored(flow);
         setNodes(n);
         setEdges(e);
         viewportRef.current = viewport || null;
@@ -108,14 +106,7 @@ export default function Builder() {
     if (!nodeType || !rfInstance) return;
     const bounds = wrapperRef.current.getBoundingClientRect();
     const position = rfInstance.project({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
-    if (nodeType === 'start') {
-      const existingStart = nodes.find((n) => n.data.nodeType === 'start');
-      if (existingStart) {
-        // Prevent multiple starts: select the existing one instead
-        setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === existingStart.id })));
-        return;
-      }
-    } else if (!nodes.some((n) => n.data.nodeType === 'start')) {
+    if (nodeType !== 'start' && !nodes.some((n) => n.data.nodeType === 'start')) {
       // Auto-seed a Start node so flows are always runnable.
       setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: position.x - 260, y: position.y }, data: { nodeType: 'start' } }));
     }
@@ -129,13 +120,7 @@ export default function Builder() {
     const bounds = wrapperRef.current.getBoundingClientRect();
     const center = rfInstance.project({ x: bounds.width / 2 - 320, y: bounds.height / 2 });
     const jitter = (Math.random() - 0.5) * 60;
-    if (nodeType === 'start') {
-      const existingStart = nodes.find((n) => n.data.nodeType === 'start');
-      if (existingStart) {
-        setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === existingStart.id })));
-        return;
-      }
-    } else if (!nodes.some((n) => n.data.nodeType === 'start')) {
+    if (nodeType !== 'start' && !nodes.some((n) => n.data.nodeType === 'start')) {
       setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: center.x - 280, y: center.y }, data: { nodeType: 'start' } }));
     }
     const node = { id: newId(), type: 'tb', position: { x: center.x + jitter, y: center.y + jitter }, selected: true, data: { ...defaultData(nodeType), nodeType } };
@@ -159,14 +144,7 @@ export default function Builder() {
 
   const collectFlow = () => {
     const vp = rfInstance ? { x: rfInstance.getViewport().x, y: rfInstance.getViewport().y, zoom: rfInstance.getViewport().zoom } : viewportRef.current;
-    // Ensure at most one Start node (keep the first one by id order)
-    let cleanNodes = nodes;
-    const starts = nodes.filter((n) => n.data?.nodeType === 'start');
-    if (starts.length > 1) {
-      const keep = starts[0];
-      cleanNodes = nodes.filter((n) => n.data?.nodeType !== 'start' || n.id === keep.id);
-    }
-    return toStored(cleanNodes, edges, vp);
+    return toStored(nodes, edges, vp);
   };
 
   const saveDraft = async () => {
@@ -240,6 +218,42 @@ export default function Builder() {
 
   const running = bot?.live?.running;
 
+  // Build categorized palette
+  const categorizedPalette = useMemo(() => {
+    const result = {};
+    PALETTE.forEach((type) => {
+      const def = NODE_DEFS[type];
+      if (!def) return;
+      const cat = def.category || 'core';
+      if (!result[cat]) result[cat] = [];
+      result[cat].push(type);
+    });
+    return result;
+  }, []);
+
+  const filteredPalette = useMemo(() => {
+    if (!paletteSearch) return categorizedPalette;
+    const search = paletteSearch.toLowerCase();
+    const result = {};
+    Object.entries(categorizedPalette).forEach(([cat, types]) => {
+      const filtered = types.filter((t) => {
+        const def = NODE_DEFS[t];
+        return def.label.toLowerCase().includes(search) || def.description.toLowerCase().includes(search) || t.includes(search);
+      });
+      if (filtered.length) result[cat] = filtered;
+    });
+    return result;
+  }, [categorizedPalette, paletteSearch]);
+
+  const toggleCategory = (cat) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
+
   return (
     <div className="builder-shell">
       <header className="builder-topbar">
@@ -263,21 +277,48 @@ export default function Builder() {
 
       <div className="builder-main">
         <aside className="palette">
-          <p className="palette-title">Nodes</p>
-          {PALETTE.map((type) => {
-            const def = NODE_DEFS[type];
+          <div className="palette-search-wrap">
+            <input
+              type="text"
+              className="palette-search"
+              placeholder="Search nodes…"
+              value={paletteSearch}
+              onChange={(e) => setPaletteSearch(e.target.value)}
+            />
+          </div>
+          {NODE_CATEGORIES.map((cat) => {
+            const types = filteredPalette[cat.id];
+            if (!types?.length) return null;
+            const isExpanded = expandedCategories.has(cat.id);
             return (
-              <div
-                key={type}
-                className="palette-item"
-                draggable
-                onDragStart={(e) => e.dataTransfer.setData('application/telebot-node', type)}
-                onClick={() => addNodeAtViewport(type)}
-                style={{ '--node-color': def.color }}
-                title={def.description}
-              >
-                <span className="palette-icon">{def.icon}</span>
-                <span>{def.label}</span>
+              <div key={cat.id} className="palette-category">
+                <button className="palette-category-header" onClick={() => toggleCategory(cat.id)} style={{ '--cat-color': cat.color }}>
+                  <span className="palette-cat-icon">{cat.icon}</span>
+                  <span className="palette-cat-label">{cat.label}</span>
+                  <span className={`palette-cat-count`}>{types.length}</span>
+                  <span className={`palette-cat-chevron ${isExpanded ? 'open' : ''}`}>▼</span>
+                </button>
+                {isExpanded && (
+                  <div className="palette-category-items">
+                    {types.map((type) => {
+                      const def = NODE_DEFS[type];
+                      return (
+                        <div
+                          key={type}
+                          className="palette-item"
+                          draggable
+                          onDragStart={(e) => e.dataTransfer.setData('application/telebot-node', type)}
+                          onClick={() => addNodeAtViewport(type)}
+                          style={{ '--node-color': def.color }}
+                          title={def.description}
+                        >
+                          <span className="palette-icon">{def.icon}</span>
+                          <span>{def.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

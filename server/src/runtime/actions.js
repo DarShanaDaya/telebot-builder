@@ -1,6 +1,8 @@
 import axios from 'axios';
+import { VM } from 'vm2';
 import { renderTemplate, renderDeep, evaluateCondition } from '../lib/template.js';
 import { config } from '../config.js';
+import { db } from '../db/index.js';
 
 // ---------------------------------------------------------------------------
 // Node executors. Each executor receives the execution context and the node,
@@ -11,6 +13,22 @@ import { config } from '../config.js';
 // ---------------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Sandboxed VM for Function node
+function createSandbox() {
+  return new VM({
+    timeout: 5000,
+    sandbox: {
+      Math,
+      JSON,
+      Date,
+      console: { log: (...args) => console.log('[Function]', ...args) },
+      // Helper functions
+      parseJson: (s) => { try { return JSON.parse(s); } catch { return null; } },
+      toJson: (v) => JSON.stringify(v),
+    },
+  });
+}
 
 async function execStart(ctx, node) {
   return { next: ctx.nextEdge(node.id) };
@@ -172,26 +190,7 @@ async function execAi(ctx, node) {
   const model = d.model || credential.data.model || 'gpt-4o-mini';
   const messages = [];
   if (d.system) messages.push({ role: 'system', content: renderTemplate(d.system, tctx) });
-
-  let userPrompt = renderTemplate(d.prompt || '{{text}}', tctx);
-  if (d.knowledgeBase && d.knowledgeBase.trim()) {
-    const kb = renderTemplate(d.knowledgeBase, tctx);
-    const fmt = (d.kbFormat || 'markdown').toLowerCase();
-    let kbBlock = '';
-    if (fmt === 'json') {
-      kbBlock = `\n\n--- KNOWLEDGE BASE (JSON) ---\n${kb}\n--- END KB ---`;
-    } else if (fmt === 'plain') {
-      kbBlock = `\n\n--- KNOWLEDGE BASE ---\n${kb}\n--- END KB ---`;
-    } else if (fmt === 'custom') {
-      kbBlock = `\n\n[KNOWLEDGE BASE]\n${kb}\n[/KNOWLEDGE BASE]`;
-    } else {
-      // markdown (default) or trusted
-      kbBlock = `\n\n--- KNOWLEDGE BASE ---\n${kb}\n--- END KB ---`;
-    }
-    userPrompt = `${userPrompt}${kbBlock}`;
-  }
-
-  messages.push({ role: 'user', content: userPrompt });
+  messages.push({ role: 'user', content: renderTemplate(d.prompt || '{{text}}', tctx) });
   await ctx.client.sendChatAction(ctx.chatId);
   try {
     const { data: resp } = await axios.post(
@@ -223,6 +222,226 @@ async function execEnd(ctx, node) {
   return { end: true };
 }
 
+// --- Advanced Logic Nodes ---
+
+async function execLoop(ctx, node) {
+  const d = node.data || {};
+  const arrayVar = d.arrayVar || 'items';
+  const itemVar = d.itemVar || 'item';
+  const indexVar = d.indexVar || 'index';
+  const maxIterations = Math.max(0, Number(d.iterations) || 100);
+
+  // Get the array from variables
+  const array = ctx.vars[arrayVar];
+  if (!Array.isArray(array)) {
+    ctx.log('warn', `Loop node ${node.id}: variable "${arrayVar}" is not an array. Skipping loop.`);
+    return { next: ctx.nextEdge(node.id, 'done') };
+  }
+
+  // Check if we're in the middle of a loop (stored in session)
+  const session = ctx.session;
+  const loopState = session.loopState?.[node.id] || { index: 0 };
+  
+  // If we have a loop state and it's not the first iteration, we're returning from the loop body
+  if (loopState.index > 0) {
+    // Continue to next iteration
+    loopState.index++;
+  } else {
+    // First iteration
+    loopState.index = 0;
+  }
+
+  if (loopState.index >= array.length || loopState.index >= maxIterations) {
+    // Loop complete
+    delete session.loopState?.[node.id];
+    return { next: ctx.nextEdge(node.id, 'done') };
+  }
+
+  // Set loop variables for this iteration
+  ctx.vars[itemVar] = array[loopState.index];
+  if (indexVar) ctx.vars[indexVar] = loopState.index;
+  
+  // Store loop state
+  if (!session.loopState) session.loopState = {};
+  session.loopState[node.id] = loopState;
+
+  ctx.log('info', `Loop ${node.id}: iteration ${loopState.index + 1}/${Math.min(array.length, maxIterations)}`);
+  
+  // Continue to loop body (iterate handle)
+  return { next: ctx.nextEdge(node.id, 'iterate') };
+}
+
+async function execSwitch(ctx, node) {
+  const d = node.data || {};
+  const value = renderTemplate(d.value ?? '', ctx.templateCtx);
+  const cases = d.cases || [];
+  
+  // Find matching case
+  let matchedCase = null;
+  let matchedIndex = -1;
+  for (let i = 0; i < cases.length; i++) {
+    const caseValue = renderTemplate(cases[i].value ?? '', ctx.templateCtx);
+    if (String(caseValue) === String(value)) {
+      matchedCase = cases[i];
+      matchedIndex = i;
+      break;
+    }
+  }
+
+  if (matchedCase) {
+    ctx.log('info', `Switch ${node.id}: "${value}" matched case ${matchedIndex} (${matchedCase.label || matchedCase.value})`);
+    return { next: ctx.nextEdge(node.id, `case-${matchedIndex}`) };
+  }
+
+  // Default case
+  if (d.defaultCase !== false) {
+    ctx.log('info', `Switch ${node.id}: "${value}" → default case`);
+    return { next: ctx.nextEdge(node.id, 'default') };
+  }
+
+  ctx.log('warn', `Switch ${node.id}: "${value}" matched no case and no default.`);
+  return { next: ctx.nextEdge(node.id) };
+}
+
+async function execFunction(ctx, node) {
+  const d = node.data || {};
+  const code = d.code || '';
+  const params = d.params || [];
+  const saveAs = d.saveAs;
+
+  if (!code.trim()) {
+    ctx.log('warn', `Function node ${node.id} has no code.`);
+    return { next: ctx.nextEdge(node.id) };
+  }
+
+  try {
+    const vm = createSandbox();
+    
+    // Prepare parameters
+    const paramValues = {};
+    for (const p of params) {
+      paramValues[p] = ctx.vars[p];
+    }
+
+    // Wrap code in a function
+    const fnCode = `
+      (function(${params.join(', ')}) {
+        const vars = ${JSON.stringify(ctx.vars)};
+        ${code}
+      })
+    `;
+    
+    const fn = vm.run(fnCode);
+    const result = fn(...params.map(p => paramValues[p]));
+
+    if (saveAs) {
+      ctx.vars[saveAs] = result;
+    }
+    
+    ctx.log('info', `Function ${d.name || node.id} executed, result:`, result);
+    return { next: ctx.nextEdge(node.id, 'success') };
+  } catch (err) {
+    ctx.log('error', `Function ${d.name || node.id} failed: ${err.message}`);
+    if (saveAs) ctx.vars[saveAs] = { error: err.message };
+    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
+  }
+}
+
+async function execParallel(ctx, node) {
+  const d = node.data || {};
+  const branches = d.branches || [];
+  const waitForAll = d.waitForAll !== false;
+  const timeoutMs = Math.min(Number(d.timeoutMs) || 30000, 120000);
+
+  if (!branches.length) {
+    ctx.log('warn', `Parallel node ${node.id} has no branches.`);
+    return { next: ctx.nextEdge(node.id) };
+  }
+
+  // For now, we'll execute branches sequentially but track them
+  // Full parallel execution would require major engine changes
+  // This implementation runs each branch and collects results
+  
+  const results = [];
+  const startTime = Date.now();
+
+  for (const branch of branches) {
+    if (Date.now() - startTime > timeoutMs) {
+      ctx.log('warn', `Parallel node ${node.id}: timeout reached`);
+      break;
+    }
+    
+    const nextNodeId = ctx.nextEdge(node.id, `branch-${branch.id}`);
+    if (nextNodeId) {
+      // We can't easily run sub-flows in the current architecture
+      // For now, log and continue
+      ctx.log('info', `Parallel branch ${branch.label || branch.id} would start at ${nextNodeId}`);
+      results.push({ branchId: branch.id, status: 'started', nextNode: nextNodeId });
+    }
+  }
+
+  // Store parallel state for potential continuation
+  if (!ctx.session.parallelState) ctx.session.parallelState = {};
+  ctx.session.parallelState[node.id] = { branches: results, waitForAll, startTime };
+
+  ctx.log('info', `Parallel ${node.id}: ${branches.length} branches initiated`);
+  
+  // Continue to first branch or next node
+  const firstBranch = branches[0];
+  if (firstBranch) {
+    const nextNodeId = ctx.nextEdge(node.id, `branch-${firstBranch.id}`);
+    if (nextNodeId) return { next: nextNodeId };
+  }
+  
+  return { next: ctx.nextEdge(node.id) };
+}
+
+async function execWebhook(ctx, node) {
+  const d = node.data || {};
+  // This node is primarily a trigger entry point
+  // When a webhook hits the endpoint, it creates/resumes a session at this node
+  // The actual webhook handling is done in the routes layer
+  ctx.log('info', `Webhook trigger ${node.id} activated`);
+  
+  // Save webhook payload if configured
+  if (d.saveAs && ctx.webhookData) {
+    ctx.vars[d.saveAs] = ctx.webhookData;
+  }
+  
+  // Continue to next node
+  return { next: ctx.nextEdge(node.id, 'triggered') };
+}
+
+async function execLog(ctx, node) {
+  const d = node.data || {};
+  const level = d.level || 'info';
+  const message = renderTemplate(d.message || 'Log entry', ctx.templateCtx);
+  
+  // Prepare structured data
+  let logData = { ...d.data };
+  
+  // Render templates in data
+  for (const [key, value] of Object.entries(logData)) {
+    if (typeof value === 'string') {
+      logData[key] = renderTemplate(value, ctx.templateCtx);
+    }
+  }
+  
+  // Include all variables if requested
+  if (d.includeVars !== false) {
+    logData._vars = { ...ctx.vars };
+  }
+  
+  // Add context
+  logData._nodeId = node.id;
+  logData._chatId = ctx.chatId;
+  logData._timestamp = new Date().toISOString();
+  
+  ctx.log(level, message, logData);
+  
+  return { next: ctx.nextEdge(node.id) };
+}
+
 export const EXECUTORS = {
   start: execStart,
   message: execMessage,
@@ -234,4 +453,13 @@ export const EXECUTORS = {
   ai: execAi,
   delay: execDelay,
   end: execEnd,
+  // Advanced Logic
+  loop: execLoop,
+  switch: execSwitch,
+  function: execFunction,
+  parallel: execParallel,
+  // Integration
+  webhook: execWebhook,
+  // Observability
+  log: execLog,
 };

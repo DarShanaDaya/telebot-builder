@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { VM } from 'vm2';
 import { renderTemplate, renderDeep, evaluateCondition } from '../lib/template.js';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
@@ -13,22 +12,6 @@ import { db } from '../db/index.js';
 // ---------------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Sandboxed VM for Function node
-function createSandbox() {
-  return new VM({
-    timeout: 5000,
-    sandbox: {
-      Math,
-      JSON,
-      Date,
-      console: { log: (...args) => console.log('[Function]', ...args) },
-      // Helper functions
-      parseJson: (s) => { try { return JSON.parse(s); } catch { return null; } },
-      toJson: (v) => JSON.stringify(v),
-    },
-  });
-}
 
 async function execStart(ctx, node) {
   return { next: ctx.nextEdge(node.id) };
@@ -318,55 +301,10 @@ async function execSwitch(ctx, node) {
 }
 
 async function execFunction(ctx, node) {
-  const d = node.data || {};
-  if (!config.allowExperimentalFunctionNodes) {
-    ctx.log('error', `Function node ${node.id} is disabled until isolated code execution is available.`);
-    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
-  }
-  const code = d.code || '';
-  const params = d.params || [];
-  const saveAs = d.saveAs;
-
-  if (!code.trim()) {
-    ctx.log('warn', `Function node ${node.id} has no code.`);
-    return { next: ctx.nextEdge(node.id) };
-  }
-
-  try {
-    const vm = createSandbox();
-    
-    // Prepare parameters
-    const paramValues = {};
-    for (const p of params) {
-      paramValues[p] = ctx.vars[p];
-    }
-
-    // Wrap code in a function
-    const fnCode = `
-      (function(${params.join(', ')}) {
-        const vars = ${JSON.stringify(ctx.vars)};
-        ${code}
-      })
-    `;
-    
-    const fn = vm.run(fnCode);
-    const result = fn(...params.map(p => paramValues[p]));
-
-    if (saveAs) {
-      ctx.vars[saveAs] = result;
-      ctx.recordNodeValue(node, saveAs, result);
-    }
-    
-    ctx.log('info', `Function ${d.name || node.id} executed, result:`, result);
-    return { next: ctx.nextEdge(node.id, 'success') };
-  } catch (err) {
-    ctx.log('error', `Function ${d.name || node.id} failed: ${err.message}`);
-    if (saveAs) {
-      ctx.vars[saveAs] = { error: err.message };
-      ctx.recordNodeValue(node, saveAs, ctx.vars[saveAs]);
-    }
-    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
-  }
+  // Intentionally unavailable until an isolated code-runner service exists.
+  // Never execute flow-authored JavaScript inside the API/runtime process.
+  ctx.log('error', `Function node ${node.id} is disabled until isolated code execution is available.`);
+  return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
 }
 
 async function execParallel(ctx, node) {

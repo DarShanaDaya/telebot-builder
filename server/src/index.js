@@ -28,7 +28,7 @@ export function buildApp() {
       capabilities: {
         experimentalParallel: config.allowExperimentalParallelNodes,
         experimentalWebhook: config.allowExperimentalWebhookNodes,
-        experimentalFunction: config.allowExperimentalFunctionNodes,
+        experimentalFunction: false,
       },
     });
   });

@@ -90,9 +90,8 @@ export const config = {
   maxHttpTimeoutMs: 30000,
   maxDelaySeconds: 600,
   logRetentionPerBot: 500,
-  // Function code is never enabled in production. Other incomplete nodes are
-  // individually opt-in only outside production, so enabling one capability
-  // cannot accidentally enable a different unsafe feature.
+  // Incomplete nodes are individually opt-in only outside production. Function
+  // code remains hard-disabled until an isolated runner exists.
   allowExperimentalFunctionNodes: false,
   allowExperimentalParallelNodes: process.env.NODE_ENV !== 'production' && process.env.ALLOW_EXPERIMENTAL_PARALLEL_NODES === 'true',
   allowExperimentalWebhookNodes: process.env.NODE_ENV !== 'production' && process.env.ALLOW_EXPERIMENTAL_WEBHOOK_NODES === 'true',

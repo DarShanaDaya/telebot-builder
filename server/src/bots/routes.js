@@ -85,7 +85,10 @@ async function hydrateImportedFlow(archive, userId) {
   const flow = JSON.parse(JSON.stringify(archive.flow));
   if (!Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) throw badRequest('Imported flow must contain nodes[] and edges[].');
   const credentials = await db.listCredentials(userId);
-  const requirements = new Map((archive.requirements?.credentials || []).map((item) => [item.ref, item]));
+  const declaredRequirements = Array.isArray(archive.requirements?.credentials) ? archive.requirements.credentials : [];
+  const requirements = new Map(declaredRequirements
+    .filter((item) => item && typeof item.ref === 'string' && typeof item.name === 'string' && typeof item.type === 'string')
+    .map((item) => [item.ref, item]));
   for (const node of flow.nodes) {
     const data = node.data || {};
     if (!data.credentialRef) continue;

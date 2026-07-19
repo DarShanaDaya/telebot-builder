@@ -215,6 +215,10 @@ export default function Builder() {
   };
 
   const exportFlow = async () => {
+    if (dirty) {
+      showToast('Save the draft before exporting so the archive includes your latest changes.', 'error');
+      return;
+    }
     setBusy('export');
     try {
       const { data } = await api.get(`/bots/${botId}/flow/export`);

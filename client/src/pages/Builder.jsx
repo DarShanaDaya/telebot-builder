@@ -260,10 +260,13 @@ export default function Builder() {
     event.target.value = '';
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) return showToast('Flow export must be smaller than 2 MB.', 'error');
-    if (!window.confirm('Import will replace this bot’s draft. Your published flow will not change. Continue?')) return;
     setBusy('import');
     try {
       const archive = JSON.parse(await file.text());
+      const preview = await api.post(`/bots/${botId}/flow/import`, { archive, dryRun: true });
+      const { flow, warnings = [] } = preview.data;
+      const warningText = warnings.length ? `\n\nWarnings: ${warnings.join(' ')}` : '';
+      if (!window.confirm(`Import ${flow.nodes.length} nodes and ${flow.edges.length} connections as this bot’s draft? Your published flow will not change.${warningText}`)) return;
       const { data } = await api.post(`/bots/${botId}/flow/import`, { archive });
       const loadedFlow = fromStored(data.flow);
       setNodes(loadedFlow.nodes);

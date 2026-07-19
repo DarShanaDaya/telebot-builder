@@ -251,6 +251,7 @@ export function botsRouter() {
     if (flow.nodes.length > config.maxFlowNodes) throw badRequest(`Imported flow has too many nodes (max ${config.maxFlowNodes}).`);
     const { errors, warnings } = validateFlow(flow);
     if (errors.length) throw unprocessable('Imported flow has problems that must be fixed before saving.', { errors, warnings });
+    if (req.body?.dryRun === true) return res.json({ ok: true, dryRun: true, flow, warnings });
     await db.updateBot(bot.id, { flow_draft: JSON.stringify(flow), updated_at: new Date().toISOString() });
     makeBotLogger(bot.id)('info', `Imported flow draft (${flow.nodes.length} nodes, ${flow.edges.length} edges).`);
     res.json({ ok: true, flow, warnings });

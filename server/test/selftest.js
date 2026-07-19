@@ -153,6 +153,8 @@ console.log('\n■ REST API');
   const credentialRef = exported.json.requirements.credentials[0].ref;
   const ambiguousImport = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json }, token);
   check('flow import rejects ambiguous credential mappings', ambiguousImport.status === 422);
+  const previewImport = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json, credentialMap: { [credentialRef]: cred.json.credential.id }, dryRun: true }, token);
+  check('flow import preflight validates without saving', previewImport.status === 200 && previewImport.json.dryRun === true && previewImport.json.flow.nodes.length === flow.nodes.length);
   const imported = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json, credentialMap: { [credentialRef]: cred.json.credential.id } }, token);
   check('flow import restores a validated draft', duplicateCredential.status === 201 && imported.status === 200 && imported.json.flow.nodes.length === flow.nodes.length);
 

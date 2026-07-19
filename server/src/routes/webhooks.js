@@ -14,7 +14,9 @@ export function webhooksRouter() {
       if (!bot || bot.webhook_secret !== secret || bot.status !== 'running' || bot.mode !== 'webhook') {
         return res.sendStatus(200); // always 200 so Telegram stops retrying
       }
-      processUpdate(botId, req.body); // async — respond immediately
+      // Await handling so serverless runtimes do not freeze work after a 200
+      // response. Durable queueing remains the long-term execution model.
+      await processUpdate(botId, req.body);
     } catch (err) {
       console.error('[webhook] dispatch error:', err.message);
     }

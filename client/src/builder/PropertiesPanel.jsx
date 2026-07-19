@@ -20,13 +20,18 @@ function ButtonsEditor({ data, onChange }) {
     const next = buttons.map((b, idx) => (idx === i ? { ...b, ...patch } : b));
     set(data, onChange, 'buttons', next);
   };
-  const add = () => set(data, onChange, 'buttons', [...buttons, { id: `b${Date.now().toString(36)}`, label: `Option ${buttons.length + 1}`, url: '' }]);
+  const add = () => {
+    const label = `Option ${buttons.length + 1}`;
+    set(data, onChange, 'buttons', [...buttons, { id: `b${Date.now().toString(36)}`, name: `option_${buttons.length + 1}`, label, value: label, url: '' }]);
+  };
   const remove = (i) => set(data, onChange, 'buttons', buttons.filter((_, idx) => idx !== i));
   return (
     <div className="btn-editor">
       {buttons.map((b, i) => (
-        <div className="btn-editor-row" key={b.id}>
+        <div className="btn-editor-row button-value-row" key={b.id}>
           <input value={b.label} placeholder="Button label" onChange={(e) => update(i, { label: e.target.value })} />
+          <input value={b.name || ''} placeholder="Value name (e.g. standard)" onChange={(e) => update(i, { name: e.target.value.replace(/\s/g, '_') })} />
+          <input value={b.value ?? ''} placeholder="Value forwarded to next nodes (defaults to label)" onChange={(e) => update(i, { value: e.target.value })} />
           <input value={b.url || ''} placeholder="URL (optional — makes it a link button)" onChange={(e) => update(i, { url: e.target.value })} />
           <button className="icon-btn" title="Remove button" onClick={() => remove(i)}>✕</button>
         </div>
@@ -156,7 +161,50 @@ function MetaEditor({ data, onChange }) {
   );
 }
 
-export default function PropertiesPanel({ node, credentials, onChange, onDelete }) {
+function NodeIdentityEditor({ data, onChange }) {
+  return (
+    <details className="node-identity" open>
+      <summary>🏷️ Node identity & references</summary>
+      <div className="node-identity-fields">
+        <Field label="Node name" hint="Unique machine name used in {{{node_name.value_name}}} references.">
+          <input value={data.nodeName || ''} onChange={(e) => set(data, onChange, 'nodeName', e.target.value.replace(/\s/g, '_'))} placeholder="plan_choice" />
+        </Field>
+        <Field label="Node label" hint="Friendly name shown on the canvas and in value pickers.">
+          <input value={data.nodeLabel || ''} onChange={(e) => set(data, onChange, 'nodeLabel', e.target.value)} placeholder="Choose a plan" />
+        </Field>
+      </div>
+    </details>
+  );
+}
+
+function PreviousValuesPicker({ values }) {
+  const copy = (snippet) => {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(snippet).catch(() => window.prompt('Copy this reference:', snippet));
+    } else {
+      window.prompt('Copy this reference:', snippet);
+    }
+  };
+  return (
+    <details className="previous-values" open>
+      <summary>🧩 Previous-node values</summary>
+      <p className="field-hint">Click a reference to copy it, then paste it into any text, condition, URL, body, or prompt field.</p>
+      {values.length === 0 ? (
+        <p className="field-hint">Connect an earlier named node with an output value to see its references here.</p>
+      ) : values.map((entry) => (
+        <div className="previous-value-group" key={entry.nodeName}>
+          <div className="previous-value-title"><b>{entry.nodeLabel}</b><code>{entry.nodeName}</code></div>
+          {entry.values.map((value) => {
+            const snippet = `{{{${entry.nodeName}.${value.name}}}}`;
+            return <button key={value.name} type="button" className="template-token" title="Copy reference" onClick={() => copy(snippet)}>{value.label} <code>{snippet}</code></button>;
+          })}
+        </div>
+      ))}
+    </details>
+  );
+}
+
+export default function PropertiesPanel({ node, credentials, previousNodeValues = [], onChange, onDelete }) {
   if (!node) {
     return (
       <aside className="props-panel empty">
@@ -187,6 +235,9 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
       </div>
 
       <div className="props-body">
+        <NodeIdentityEditor data={d} onChange={onChange} />
+        <PreviousValuesPicker values={previousNodeValues} />
+
         {nodeType === 'start' && (
           <p className="field-hint">The flow starts here when a user sends <code>/start</code>, or messages a bot whose conversation has ended.</p>
         )}
@@ -209,6 +260,9 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
             </Field>
             <Field label="Buttons">
               <ButtonsEditor data={d} onChange={onChange} />
+            </Field>
+            <Field label="Save selected value to" hint="Every following node can use this as {{variable}}. Blank uses button_value.">
+              <input value={d.saveAs ?? 'button_value'} onChange={(e) => set(d, onChange, 'saveAs', e.target.value.replace(/\s/g, '_'))} placeholder="button_value" />
             </Field>
             <Field label="Reminder text (optional)" hint="Sent when the user types instead of tapping a button.">
               <input value={d.nudgeText || ''} onChange={(e) => set(d, onChange, 'nudgeText', e.target.value)} placeholder="Please tap a button above ⬆️" />
@@ -468,7 +522,7 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
               <textarea rows={4} value={JSON.stringify(d.data || {}, null, 2)} onChange={(e) => { try { set(d, onChange, 'data', JSON.parse(e.target.value)); } catch {} }} placeholder='{ "orderId": "{{order_id}}", "amount": "{{total}}" }' style={{ fontFamily: 'monospace', fontSize: '0.85rem' }} />
             </Field>
             <label className="check-row">
-              <input type="checkbox" checked={d.includeVars !== false} onChange={(e) => set(d, onChange, 'includeVars', e.target.checked)} />
+              <input type="checkbox" checked={d.includeVars === true} onChange={(e) => set(d, onChange, 'includeVars', e.target.checked)} />
               Include all flow variables in log
             </label>
           </>

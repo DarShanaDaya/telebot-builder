@@ -123,7 +123,8 @@ function TbNode({ id, type, data, selected }) {
       {!isStart && <Handle type="target" position={Position.Left} />}
       <div className="tb-node-head">
         <span className="tb-node-icon">{def.icon}</span>
-        <span className="tb-node-title">{def.label}</span>
+        <span className="tb-node-title">{data?.nodeLabel || def.label}</span>
+        {data?.nodeName && <span className="tb-node-custom-id" title={`Node name: ${data.nodeName}`}>#{data.nodeName}</span>}
         {meta.customId && <span className="tb-node-custom-id" title={`Custom ID: ${meta.customId}`}>#{meta.customId}</span>}
         {meta.tags?.length && <span className="tb-node-tags">{meta.tags.map(t => `#${t}`).join(' ')}</span>}
         {isDisabled && <span className="tb-node-disabled-badge">⏸ Disabled</span>}

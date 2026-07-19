@@ -41,6 +41,13 @@ export function processUpdate(botId, update) {
 async function dispatchUpdate(botId, update) {
   const bot = await db.getBot(botId);
   if (!bot || bot.status !== 'running') return;
+  // Telegram can redeliver webhook/polling updates. Claim the platform update
+  // before executing side effects so duplicate deliveries do not replay a flow.
+  const updateId = update?.update_id;
+  if (updateId != null) {
+    const claimed = await db.claimUpdate(botId, updateId);
+    if (!claimed) return;
+  }
   const inst = instances.get(botId);
   let client = inst?.client;
   if (!client) {
@@ -52,16 +59,22 @@ async function dispatchUpdate(botId, update) {
       return;
     }
   }
-  await handleUpdate({ bot, client, update, log: makeBotLogger(botId) });
+  const handled = await handleUpdate({ bot, client, update, log: makeBotLogger(botId) });
+  if (!handled && updateId != null) {
+    // Permit Telegram to retry a delivery that failed before the session could
+    // be durably persisted. A transactional outbox remains the next step for
+    // exact side-effect recovery.
+    await db.releaseUpdate(botId, updateId);
+  }
 }
 
 export async function deployBot(botId) {
   const bot = await db.getBot(botId);
   if (!bot) throw new Error('Bot not found');
-  if (config.isServerless && bot.mode !== 'webhook') {
+  if (config.isServerless) {
     throw new Error(
-      'Long polling requires a long-running server, which serverless hosts (Vercel) cannot provide. ' +
-      'Switch this bot to webhook mode (PUBLIC_BASE_URL must be set), or host the backend on a persistent server.'
+      'Bot execution is disabled on serverless hosts until a durable queue/worker is configured. ' +
+      'Use a persistent single-worker deployment for polling or webhook bots.'
     );
   }
   await stopBot(botId, { keepStatus: true });

@@ -47,6 +47,12 @@ function loadSecrets() {
 
 const secrets = loadSecrets();
 
+export function boundedPositiveInteger(value, fallback, { min = 1, max = 10000 } = {}) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) return fallback;
+  return parsed;
+}
+
 // Webhook registration needs the platform public base URL. Set PUBLIC_BASE_URL
 // explicitly, or let hosting platforms that inject their public domain
 // (Railway, Render) fill it in automatically.
@@ -63,6 +69,9 @@ export const config = {
   isVercel: Boolean(process.env.VERCEL),
   port: Number(process.env.PORT || 4000),
   publicBaseUrl,
+  // Production API access is same-origin unless explicit frontend origins are
+  // configured. Development remains permissive for the Vite dev server.
+  corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
   jwtSecret: secrets.jwtSecret,
   jwtExpiresIn: '7d',
   platformSecret: secrets.platformSecret,
@@ -77,7 +86,20 @@ export const config = {
   clientDist: path.join(ROOT_DIR, 'client', 'dist'),
   // Safety limits
   maxFlowNodes: 500,
+  // A per-update safety ceiling. Waiting nodes yield execution, so this does
+  // not limit total conversation length; it prevents accidental synchronous
+  // cycles from monopolizing a worker.
+  maxFlowStepsPerUpdate: boundedPositiveInteger(process.env.MAX_FLOW_STEPS_PER_UPDATE, 500, { min: 1, max: 5000 }),
   maxHttpTimeoutMs: 30000,
+  // Private-network egress is never allowed in production. Local integration
+  // tests may opt in explicitly before the config module loads.
+  allowPrivateHttpTargets: process.env.NODE_ENV !== 'production' && process.env.ALLOW_PRIVATE_HTTP_TARGETS === 'true',
+  allowInsecureHttpTargets: process.env.NODE_ENV !== 'production' && process.env.ALLOW_INSECURE_HTTP_TARGETS === 'true',
   maxDelaySeconds: 600,
   logRetentionPerBot: 500,
+  // Incomplete nodes are individually opt-in only outside production. Function
+  // code remains hard-disabled until an isolated runner exists.
+  allowExperimentalFunctionNodes: false,
+  allowExperimentalParallelNodes: process.env.NODE_ENV !== 'production' && process.env.ALLOW_EXPERIMENTAL_PARALLEL_NODES === 'true',
+  allowExperimentalWebhookNodes: process.env.NODE_ENV !== 'production' && process.env.ALLOW_EXPERIMENTAL_WEBHOOK_NODES === 'true',
 };

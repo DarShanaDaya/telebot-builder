@@ -9,6 +9,8 @@ import { TelegramClient } from '../lib/telegram.js';
 import { deployBot, stopBot, isRunning, runningInfo } from '../hub/manager.js';
 import { makeBotLogger } from '../runtime/engine.js';
 import { validateFlow } from './validate.js';
+import { config } from '../config.js';
+import { rateLimit } from '../lib/rate-limit.js';
 
 const MODES = ['polling', 'webhook'];
 
@@ -44,12 +46,76 @@ async function checkToken(token) {
   return client.getMe();
 }
 
+const FLOW_EXPORT_KIND = 'telebot-builder/flow-export';
+const FLOW_EXPORT_VERSION = 1;
+
+function credentialReferenceMap(credentials) {
+  const used = new Set();
+  const byId = new Map();
+  for (const credential of credentials) {
+    const base = String(credential.name || credential.id).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'credential';
+    let ref = `credential_${base}`;
+    let suffix = 2;
+    while (used.has(ref)) ref = `credential_${base}_${suffix++}`;
+    used.add(ref);
+    byId.set(credential.id, { ref, name: credential.name, type: credential.type });
+  }
+  return byId;
+}
+
+function makeFlowExport(flow, credentials) {
+  const exportedFlow = JSON.parse(JSON.stringify(flow));
+  const byId = credentialReferenceMap(credentials);
+  const requirements = [];
+  for (const node of exportedFlow.nodes || []) {
+    const data = node.data || {};
+    if (!data.credentialId) continue;
+    const credential = byId.get(data.credentialId);
+    delete data.credentialId;
+    if (!credential) continue;
+    data.credentialRef = credential.ref;
+    if (!requirements.some((item) => item.ref === credential.ref)) requirements.push(credential);
+  }
+  return { kind: FLOW_EXPORT_KIND, schemaVersion: FLOW_EXPORT_VERSION, exportedAt: new Date().toISOString(), flow: exportedFlow, requirements: { credentials: requirements } };
+}
+
+async function hydrateImportedFlow(archive, userId, credentialMap = {}) {
+  if (!archive || archive.kind !== FLOW_EXPORT_KIND || archive.schemaVersion !== FLOW_EXPORT_VERSION || !archive.flow) {
+    throw badRequest('Unsupported flow export. Expected a Telebot Builder flow export version 1.');
+  }
+  const flow = JSON.parse(JSON.stringify(archive.flow));
+  if (!Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) throw badRequest('Imported flow must contain nodes[] and edges[].');
+  const credentials = await db.listCredentials(userId);
+  const declaredRequirements = Array.isArray(archive.requirements?.credentials) ? archive.requirements.credentials : [];
+  const requirements = new Map(declaredRequirements
+    .filter((item) => item && typeof item.ref === 'string' && typeof item.name === 'string' && typeof item.type === 'string')
+    .map((item) => [item.ref, item]));
+  for (const node of flow.nodes) {
+    const data = node.data || {};
+    if (!data.credentialRef) continue;
+    const required = requirements.get(data.credentialRef);
+    const explicitlyMappedId = typeof credentialMap?.[data.credentialRef] === 'string' ? credentialMap[data.credentialRef] : null;
+    const candidates = credentials.filter((credential) => credential.name === required?.name && credential.type === required?.type);
+    const match = explicitlyMappedId
+      ? credentials.find((credential) => credential.id === explicitlyMappedId && credential.type === required?.type)
+      : candidates.length === 1 ? candidates[0] : null;
+    if (!match) {
+      const reason = candidates.length > 1 ? 'Multiple matching credentials exist; provide an explicit credential mapping.' : 'Create it before importing.';
+      throw unprocessable(`Import requires credential "${required?.name || data.credentialRef}" (${required?.type || 'unknown type'}). ${reason}`);
+    }
+    data.credentialId = match.id;
+    delete data.credentialRef;
+  }
+  return flow;
+}
+
 export function botsRouter() {
   const r = Router();
+  const tokenValidationRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, key: (req) => `${req.ip || 'unknown'}:${req.user?.id || 'anonymous'}` });
   r.use(requireAuth);
 
   // Validate a BotFather token against Telegram without creating a bot.
-  r.post('/validate-token', ah(async (req, res) => {
+  r.post('/validate-token', tokenValidationRateLimit, ah(async (req, res) => {
     const token = String(req.body?.token || '').trim();
     if (!/^\d+:[\w-]{20,}$/.test(token)) {
       return res.status(200).json({ ok: false, error: 'That doesn’t look like a BotFather token (format: 123456:ABC-DEF…).' });
@@ -164,6 +230,31 @@ export function botsRouter() {
       published: bot.flow_published ? JSON.parse(bot.flow_published) : null,
       published_at: bot.published_at,
     });
+  }));
+
+  // Portable flow exports deliberately exclude bot tokens, credential IDs,
+  // credential secrets, sessions, logs, and webhook secrets.
+  r.get('/:id/flow/export', ah(async (req, res) => {
+    const bot = await ownedBot(req, req.params.id);
+    const flow = bot.flow_draft ? JSON.parse(bot.flow_draft) : null;
+    if (!flow) throw badRequest('There is no draft flow to export.');
+    const archive = makeFlowExport(flow, await db.listCredentials(req.user.id));
+    res.setHeader('Content-Disposition', `attachment; filename="telebot-flow-${bot.id}.json"`);
+    res.json(archive);
+  }));
+
+  // Imports always replace the draft only; a published flow is never changed
+  // until the owner explicitly validates and publishes the imported draft.
+  r.post('/:id/flow/import', ah(async (req, res) => {
+    const bot = await ownedBot(req, req.params.id);
+    const flow = await hydrateImportedFlow(req.body?.archive, req.user.id, req.body?.credentialMap);
+    if (flow.nodes.length > config.maxFlowNodes) throw badRequest(`Imported flow has too many nodes (max ${config.maxFlowNodes}).`);
+    const { errors, warnings } = validateFlow(flow);
+    if (errors.length) throw unprocessable('Imported flow has problems that must be fixed before saving.', { errors, warnings });
+    if (req.body?.dryRun === true) return res.json({ ok: true, dryRun: true, flow, warnings });
+    await db.updateBot(bot.id, { flow_draft: JSON.stringify(flow), updated_at: new Date().toISOString() });
+    makeBotLogger(bot.id)('info', `Imported flow draft (${flow.nodes.length} nodes, ${flow.edges.length} edges).`);
+    res.json({ ok: true, flow, warnings });
   }));
 
   r.put('/:id/flow', ah(async (req, res) => {

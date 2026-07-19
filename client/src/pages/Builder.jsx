@@ -25,6 +25,7 @@ const edgeStyle = {
 
 // Stored payloads keep only stable fields.
 const toStored = (nodes, edges, viewport) => JSON.parse(JSON.stringify({
+  schemaVersion: 1,
   nodes: nodes.map((n) => ({ id: n.id, type: n.data.nodeType, position: n.position, data: n.data })),
   edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
   viewport,
@@ -39,9 +40,42 @@ const fromStored = (flow) => ({
 let idCounter = 1;
 const newId = () => `n${Date.now().toString(36)}_${idCounter++}`;
 
+const toNodeName = (value) => String(value || 'node')
+  .trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'node';
+const isReferenceName = (value) => /^[A-Za-z][\w-]*$/.test(String(value || '').trim());
+
+function newNodeData(nodeType, existingNodes = []) {
+  const base = toNodeName(nodeType);
+  const used = new Set(existingNodes.map((n) => n.data?.nodeName).filter(Boolean));
+  let nodeName = base;
+  let suffix = 2;
+  while (used.has(nodeName)) nodeName = `${base}_${suffix++}`;
+  return { ...defaultData(nodeType), nodeType, nodeName, nodeLabel: NODE_DEFS[nodeType]?.label || nodeType };
+}
+
+function producedValues(node, canReachSelected) {
+  const d = node.data || {};
+  const type = d.nodeType;
+  if (!d.nodeName) return [];
+  if (type === 'buttons') return (d.buttons || [])
+    .filter((b) => b?.name && !b.url?.trim() && isReferenceName(b.name))
+    // A button value exists only on the branch connected to that button's
+    // output. Do not offer values from sibling branches that are guaranteed
+    // to be empty at the selected node.
+    .filter((b) => canReachSelected(`btn-${b.id}`))
+    .map((b) => ({ name: b.name, label: b.label || b.name }));
+  if (type === 'input') return isReferenceName(d.variable) ? [{ name: d.variable, label: d.variable }] : [];
+  if (['setvar', 'http', 'ai', 'function', 'webhook'].includes(type)) {
+    const name = type === 'setvar' ? d.name : d.saveAs;
+    return isReferenceName(name) ? [{ name, label: name }] : [];
+  }
+  return [];
+}
+
 export default function Builder() {
   const { botId } = useParams();
   const wrapperRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [rfInstance, setRfInstance] = useState(null);
   const [bot, setBot] = useState(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -108,9 +142,9 @@ export default function Builder() {
     const position = rfInstance.project({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
     if (nodeType !== 'start' && !nodes.some((n) => n.data.nodeType === 'start')) {
       // Auto-seed a Start node so flows are always runnable.
-      setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: position.x - 260, y: position.y }, data: { nodeType: 'start' } }));
+      setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: position.x - 260, y: position.y }, data: newNodeData('start', ns) }));
     }
-    const node = { id: newId(), type: 'tb', position, selected: true, data: { ...defaultData(nodeType), nodeType } };
+    const node = { id: newId(), type: 'tb', position, selected: true, data: newNodeData(nodeType, nodes) };
     markDirty();
     setNodes((ns) => ns.map((n) => ({ ...n, selected: false })).concat(node));
   }, [rfInstance, nodes, setNodes]);
@@ -121,15 +155,53 @@ export default function Builder() {
     const center = rfInstance.project({ x: bounds.width / 2 - 320, y: bounds.height / 2 });
     const jitter = (Math.random() - 0.5) * 60;
     if (nodeType !== 'start' && !nodes.some((n) => n.data.nodeType === 'start')) {
-      setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: center.x - 280, y: center.y }, data: { nodeType: 'start' } }));
+      setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: center.x - 280, y: center.y }, data: newNodeData('start', ns) }));
     }
-    const node = { id: newId(), type: 'tb', position: { x: center.x + jitter, y: center.y + jitter }, selected: true, data: { ...defaultData(nodeType), nodeType } };
+    const node = { id: newId(), type: 'tb', position: { x: center.x + jitter, y: center.y + jitter }, selected: true, data: newNodeData(nodeType, nodes) };
     markDirty();
     setNodes((ns) => ns.map((n) => ({ ...n, selected: false })).concat(node));
   };
 
   const selectedNode = useMemo(() => nodes.find((n) => n.selected) || null, [nodes]);
   const selectedId = selectedNode?.id || null;
+
+  // Only show values produced by nodes that can reach the selected node. This
+  // keeps the picker useful even on large, branching flows.
+  const previousNodeValues = useMemo(() => {
+    if (!selectedId) return [];
+    const upstream = new Set();
+    const pending = [selectedId];
+    while (pending.length) {
+      const target = pending.pop();
+      for (const edge of edges) {
+        if (edge.target !== target || upstream.has(edge.source)) continue;
+        upstream.add(edge.source);
+        pending.push(edge.source);
+      }
+    }
+    const reachMemo = new Map();
+    const canReach = (nodeId, seen = new Set()) => {
+      if (nodeId === selectedId) return true;
+      if (reachMemo.has(nodeId)) return reachMemo.get(nodeId);
+      if (seen.has(nodeId)) return false;
+      const nextSeen = new Set(seen).add(nodeId);
+      const result = edges.some((edge) => edge.source === nodeId && canReach(edge.target, nextSeen));
+      reachMemo.set(nodeId, result);
+      return result;
+    };
+    const handleCanReach = (nodeId, handle) => edges
+      .filter((edge) => edge.source === nodeId && (edge.sourceHandle || 'out') === handle)
+      .some((edge) => canReach(edge.target));
+
+    return nodes
+      .filter((node) => upstream.has(node.id) && node.data?.nodeName)
+      .map((node) => ({
+        nodeName: node.data.nodeName,
+        nodeLabel: node.data.nodeLabel || NODE_DEFS[node.data.nodeType]?.label || node.data.nodeName,
+        values: producedValues(node, (handle) => handleCanReach(node.id, handle)),
+      }))
+      .filter((entry) => entry.values.length);
+  }, [nodes, edges, selectedId]);
 
   const updateData = useCallback((data) => {
     markDirty();
@@ -155,6 +227,56 @@ export default function Builder() {
       showToast('Draft saved');
     } catch (err) {
       showToast(apiError(err), 'error');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const exportFlow = async () => {
+    if (dirty) {
+      showToast('Save the draft before exporting so the archive includes your latest changes.', 'error');
+      return;
+    }
+    setBusy('export');
+    try {
+      const { data } = await api.get(`/bots/${botId}/flow/export`);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `telebot-flow-${botId}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast('Flow exported — secrets were excluded');
+    } catch (err) {
+      showToast(apiError(err, 'Could not export flow'), 'error');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const importFlow = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) return showToast('Flow export must be smaller than 2 MB.', 'error');
+    setBusy('import');
+    try {
+      const archive = JSON.parse(await file.text());
+      const preview = await api.post(`/bots/${botId}/flow/import`, { archive, dryRun: true });
+      const { flow, warnings = [] } = preview.data;
+      const warningText = warnings.length ? `\n\nWarnings: ${warnings.join(' ')}` : '';
+      if (!window.confirm(`Import ${flow.nodes.length} nodes and ${flow.edges.length} connections as this bot’s draft? Your published flow will not change.${warningText}`)) return;
+      const { data } = await api.post(`/bots/${botId}/flow/import`, { archive });
+      const loadedFlow = fromStored(data.flow);
+      setNodes(loadedFlow.nodes);
+      setEdges(loadedFlow.edges);
+      viewportRef.current = loadedFlow.viewport || null;
+      setDirty(false);
+      setIssues(data.warnings?.length ? { errors: [], warnings: data.warnings } : null);
+      showToast('Flow imported as draft — validate and publish when ready');
+    } catch (err) {
+      showToast(err instanceof SyntaxError ? 'The selected file is not valid JSON.' : apiError(err, 'Could not import flow'), 'error');
     } finally {
       setBusy('');
     }
@@ -266,6 +388,9 @@ export default function Builder() {
           {dirty && <span className="pill warn">unsaved</span>}
         </div>
         <div className="builder-actions">
+          <input ref={fileInputRef} type="file" accept="application/json,.json" hidden onChange={importFlow} />
+          <button className="btn ghost sm" disabled={Boolean(busy)} onClick={() => fileInputRef.current?.click()}>Import</button>
+          <button className="btn ghost sm" disabled={Boolean(busy)} onClick={exportFlow}>Export</button>
           <button className="btn ghost sm" disabled={busy === 'validate'} onClick={validate}>Validate</button>
           <button className="btn ghost sm" disabled={busy === 'save' || !dirty} onClick={saveDraft}>{busy === 'save' ? 'Saving…' : 'Save draft'}</button>
           <button className="btn primary sm" disabled={busy === 'publish'} onClick={publish}>{busy === 'publish' ? 'Publishing…' : 'Publish'}</button>
@@ -351,7 +476,7 @@ export default function Builder() {
           )}
         </div>
 
-        <PropertiesPanel node={selectedNode} credentials={credentials} onChange={updateData} onDelete={deleteNode} />
+        <PropertiesPanel node={selectedNode} credentials={credentials} previousNodeValues={previousNodeValues} onChange={updateData} onDelete={deleteNode} />
       </div>
 
       {issues && (issues.errors.length > 0 || issues.warnings.length > 0) && (

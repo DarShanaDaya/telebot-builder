@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { db } from '../db/index.js';
 import { signToken, requireAuth } from './middleware.js';
 import { ah, badRequest, conflict, unauthorized, zodError } from '../lib/http.js';
+import { rateLimit } from '../lib/rate-limit.js';
 
 const registerSchema = z.object({
   email: z.string().email('Enter a valid email address'),
@@ -21,8 +22,9 @@ const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name, created_at:
 
 export function authRouter() {
   const r = Router();
+  const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20 });
 
-  r.post('/register', ah(async (req, res) => {
+  r.post('/register', authRateLimit, ah(async (req, res) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) throw badRequest(zodError(parsed.error));
     const email = parsed.data.email.toLowerCase().trim();
@@ -38,7 +40,7 @@ export function authRouter() {
     res.status(201).json({ token: signToken(user), user: publicUser(user) });
   }));
 
-  r.post('/login', ah(async (req, res) => {
+  r.post('/login', authRateLimit, ah(async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) throw badRequest(zodError(parsed.error));
     const user = await db.findUserByEmail(parsed.data.email.toLowerCase().trim());

@@ -54,6 +54,14 @@ create table if not exists public.sessions (
 );
 create index if not exists idx_sessions_bot on public.sessions(bot_id);
 
+create table if not exists public.processed_updates (
+  bot_id text not null references public.bots(id) on delete cascade,
+  update_id text not null,
+  created_at timestamptz not null default now(),
+  primary key (bot_id, update_id)
+);
+create index if not exists idx_processed_updates_created on public.processed_updates(created_at);
+
 create table if not exists public.logs (
   id bigint generated always as identity primary key,
   bot_id text not null references public.bots(id) on delete cascade,
@@ -71,4 +79,5 @@ alter table public.users enable row level security;
 alter table public.bots enable row level security;
 alter table public.credentials enable row level security;
 alter table public.sessions enable row level security;
+alter table public.processed_updates enable row level security;
 alter table public.logs enable row level security;

@@ -1,6 +1,18 @@
 // Static analysis of a flow before publishing.
 // Returns { errors: [], warnings: [] } — errors block publishing.
 
+import { config } from '../config.js';
+
+const EXPERIMENTAL_NODE_CAPABILITY = {
+  function: 'allowExperimentalFunctionNodes',
+  parallel: 'allowExperimentalParallelNodes',
+  webhook: 'allowExperimentalWebhookNodes',
+};
+const REFERENCE_NAME_RE = /^[A-Za-z][\w-]*$/;
+
+const isReferenceName = (value) => typeof value === 'string' && REFERENCE_NAME_RE.test(value.trim());
+const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
+
 const NODE_LABELS = {
   start: 'Start',
   message: 'Message',
@@ -12,6 +24,12 @@ const NODE_LABELS = {
   ai: 'AI Reply',
   delay: 'Delay',
   end: 'End',
+  loop: 'Loop',
+  switch: 'Switch',
+  function: 'Function',
+  parallel: 'Parallel',
+  webhook: 'Webhook',
+  log: 'Log',
 };
 
 export function validateFlow(flow) {
@@ -19,6 +37,15 @@ export function validateFlow(flow) {
   const warnings = [];
   const nodes = flow?.nodes || [];
   const edges = flow?.edges || [];
+
+  if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+    errors.push('Flow must contain nodes[] and edges[] arrays.');
+    return { errors, warnings };
+  }
+  if (nodes.some((node) => !node || typeof node !== 'object') || edges.some((edge) => !edge || typeof edge !== 'object')) {
+    errors.push('Flow contains an invalid node or edge object.');
+    return { errors, warnings };
+  }
 
   if (!nodes.length) {
     errors.push('The flow is empty — add a Start node to begin.');
@@ -30,6 +57,20 @@ export function validateFlow(flow) {
   if (starts.length > 1) warnings.push('Multiple Start nodes found — only the first one runs.');
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const nodeNames = new Map();
+  for (const node of nodes) {
+    const nodeName = typeof node.data?.nodeName === 'string' ? node.data.nodeName.trim() : '';
+    if (!nodeName) continue; // Legacy flows may opt in gradually.
+    if (!REFERENCE_NAME_RE.test(nodeName)) {
+      errors.push(`Node name "${nodeName}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+      continue;
+    }
+    if (nodeNames.has(nodeName)) {
+      errors.push(`Node name "${nodeName}" is used more than once. Named-node references must be unique.`);
+    } else {
+      nodeNames.set(nodeName, node.id);
+    }
+  }
   for (const e of edges) {
     if (!byId.has(e.source) || !byId.has(e.target)) {
       errors.push('An edge points to a node that no longer exists.');
@@ -59,21 +100,37 @@ export function validateFlow(flow) {
   for (const node of nodes) {
     const d = node.data || {};
     const at = label(node);
+    const capability = EXPERIMENTAL_NODE_CAPABILITY[node.type];
+    if (capability && !config[capability]) {
+      errors.push(`${at} nodes are disabled until their production execution model is available.`);
+      continue;
+    }
     switch (node.type) {
       case 'start':
         if (!outgoing(node.id).length) errors.push('Start node is not connected to anything.');
         break;
       case 'message':
-        if (!d.text?.trim() && !d.photoUrl?.trim()) errors.push(`${at} node has no text or photo.`);
+        if (!hasText(d.text) && !hasText(d.photoUrl)) errors.push(`${at} node has no text or photo.`);
         break;
       case 'buttons': {
-        const buttons = (d.buttons || []).filter((b) => b && b.label);
+        const buttons = (Array.isArray(d.buttons) ? d.buttons : []).filter((b) => b && hasText(b.label));
         if (!buttons.length) {
           errors.push(`${at} node has no buttons.`);
           break;
         }
+        const buttonValueNames = new Set();
         for (const b of buttons) {
-          if (b.url?.trim()) continue;
+          const buttonName = typeof b.name === 'string' ? b.name.trim() : '';
+          if (!buttonName) {
+            warnings.push(`Button "${b.label}" has no value name, so it cannot be used with a named-node reference.`);
+          } else if (!isReferenceName(buttonName)) {
+            errors.push(`Button value name "${b.name}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+          } else if (buttonValueNames.has(buttonName)) {
+            errors.push(`Button value name "${b.name}" is duplicated in the same Buttons node.`);
+          } else {
+            buttonValueNames.add(buttonName);
+          }
+          if (hasText(b.url)) continue;
           if (!outgoing(node.id, `btn-${b.id}`).length && !outgoing(node.id).length) {
             warnings.push(`Button "${b.label}" has no connection — pressing it ends the conversation.`);
           }
@@ -81,23 +138,38 @@ export function validateFlow(flow) {
         break;
       }
       case 'input':
-        if (!d.variable?.trim()) errors.push(`${at} node needs a variable name to store the answer.`);
+        if (typeof d.variable !== 'string' || !d.variable.trim()) errors.push(`${at} node needs a variable name to store the answer.`);
+        else if (!isReferenceName(d.variable)) errors.push(`${at} variable name "${d.variable}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'condition':
-        if (!d.left?.trim()) errors.push(`${at} node needs a value on the left side.`);
+        if (!hasText(d.left)) errors.push(`${at} node needs a value on the left side.`);
         if (!outgoing(node.id, 'true').length && !outgoing(node.id, 'false').length) {
           warnings.push(`${at} node has no true/false connections.`);
         }
         break;
       case 'setvar':
-        if (!d.name?.trim()) errors.push(`${at} node needs a variable name.`);
+        if (typeof d.name !== 'string' || !d.name.trim()) errors.push(`${at} node needs a variable name.`);
+        else if (!isReferenceName(d.name)) errors.push(`${at} variable name "${d.name}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'http':
-        if (!d.url?.trim()) errors.push(`${at} node needs a URL.`);
+        if (!hasText(d.url)) errors.push(`${at} node needs a URL.`);
+        if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} response variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'ai':
         if (!d.credentialId) errors.push(`${at} node needs an OpenAI credential.`);
-        else if (!d.prompt?.trim()) errors.push(`${at} node needs a prompt.`);
+        else if (!hasText(d.prompt)) errors.push(`${at} node needs a prompt.`);
+        if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} reply variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+        break;
+      case 'function':
+        if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} result variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+        break;
+      case 'webhook':
+        if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} payload variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+        break;
+      case 'loop':
+      case 'switch':
+      case 'parallel':
+      case 'log':
         break;
       case 'delay': {
         const s = Number(d.seconds);
@@ -105,7 +177,7 @@ export function validateFlow(flow) {
         break;
       }
       default:
-        if (!['end'].includes(node.type)) warnings.push(`Unknown node type "${node.type}".`);
+        if (!['end'].includes(node.type)) errors.push(`Unsupported node type "${node.type}".`);
     }
   }
 

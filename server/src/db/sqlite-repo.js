@@ -51,6 +51,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   UNIQUE(bot_id, chat_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_bot ON sessions(bot_id);
+CREATE TABLE IF NOT EXISTS processed_updates (
+  bot_id TEXT NOT NULL,
+  update_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (bot_id, update_id)
+);
+CREATE INDEX IF NOT EXISTS idx_processed_updates_created ON processed_updates(created_at);
 CREATE TABLE IF NOT EXISTS logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   bot_id TEXT NOT NULL,
@@ -107,6 +114,7 @@ export function createSqliteRepo() {
     },
     async deleteBot(id) {
       db.prepare('DELETE FROM sessions WHERE bot_id = ?').run(id);
+      db.prepare('DELETE FROM processed_updates WHERE bot_id = ?').run(id);
       db.prepare('DELETE FROM logs WHERE bot_id = ?').run(id);
       db.prepare('DELETE FROM bots WHERE id = ?').run(id);
     },
@@ -167,6 +175,17 @@ export function createSqliteRepo() {
     },
     async listSessions(botId) {
       return db.prepare('SELECT * FROM sessions WHERE bot_id = ? ORDER BY last_activity DESC').all(botId);
+    },
+
+    // ---- update de-duplication -----------------------------------------
+    async claimUpdate(botId, updateId) {
+      const result = db.prepare('INSERT OR IGNORE INTO processed_updates (bot_id, update_id, created_at) VALUES (?, ?, ?)').run(
+        botId, String(updateId), new Date().toISOString()
+      );
+      return result.changes === 1;
+    },
+    async releaseUpdate(botId, updateId) {
+      db.prepare('DELETE FROM processed_updates WHERE bot_id = ? AND update_id = ?').run(botId, String(updateId));
     },
 
     // ---- logs ------------------------------------------------------------

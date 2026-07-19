@@ -8,6 +8,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'telebot-test-'));
+// The integration HTTP node intentionally calls the local test API. Production
+// defaults deny private-network egress; this is an explicit test-only opt-in.
+process.env.ALLOW_PRIVATE_HTTP_TARGETS = 'true';
+process.env.ALLOW_INSECURE_HTTP_TARGETS = 'true';
 
 const results = [];
 const check = (name, cond, extra = '') => {
@@ -18,9 +22,11 @@ const check = (name, cond, extra = '') => {
 // ---- imports (after env is set) -------------------------------------------
 const { encryptString, decryptString, maskSecrets } = await import('../src/lib/crypto.js');
 const { renderTemplate, evaluateCondition } = await import('../src/lib/template.js');
+const { boundedPositiveInteger } = await import('../src/config.js');
 const { db } = await import('../src/db/index.js');
 const { buildApp } = await import('../src/index.js');
 const { handleUpdate, makeBotLogger } = await import('../src/runtime/engine.js');
+const { isPrivateIp } = await import('../src/runtime/actions.js');
 
 // ---- unit: crypto + templating ---------------------------------------------
 console.log('\n■ crypto & templating');
@@ -31,8 +37,17 @@ console.log('\n■ crypto & templating');
   const masked = maskSecrets({ apiKey: 'sk-abcdefghijklmnop' });
   check('masking shows only last 4', masked.apiKey.endsWith('mnop') && !masked.apiKey.includes('abcd'));
   check('template renders nested paths', renderTemplate('Hi {{first_name}}, total={{h.body.ok}}', { first_name: 'Ada', h: { body: { ok: true } } }) === 'Hi Ada, total=true');
+  check('triple-brace node reference renders namespaced value', renderTemplate('{{{plan.standard}}}', { _nodeValues: { plan: { standard: 'standard' } } }) === 'standard');
   check('condition gt', evaluateCondition({ left: '{{num}}', op: 'gt', right: '10' }, { num: 15 }) === true);
   check('condition contains', evaluateCondition({ left: 'hello world', op: 'contains', right: 'WORLD' }, {}) === true);
+  check('step guard config rejects invalid values',
+    boundedPositiveInteger('abc', 500, { min: 1, max: 5000 }) === 500
+    && boundedPositiveInteger('Infinity', 500, { min: 1, max: 5000 }) === 500
+    && boundedPositiveInteger('0', 500, { min: 1, max: 5000 }) === 500
+    && boundedPositiveInteger('501', 500, { min: 1, max: 5000 }) === 501);
+  check('HTTP egress identifies private and reserved targets',
+    isPrivateIp('127.0.0.1') && isPrivateIp('10.0.0.1') && isPrivateIp('169.254.169.254')
+    && isPrivateIp('192.168.1.1') && isPrivateIp('::1') && !isPrivateIp('8.8.8.8'));
 }
 
 // ---- API + engine -----------------------------------------------------------
@@ -92,12 +107,12 @@ console.log('\n■ REST API');
     nodes: [
       { id: 'start-1', type: 'start', position: { x: 0, y: 0 }, data: {} },
       { id: 'msg-welcome', type: 'message', position: { x: 0, y: 0 }, data: { text: 'Welcome {{first_name}}!' } },
-      { id: 'btns-1', type: 'buttons', position: { x: 0, y: 0 }, data: { text: 'Pick one:', buttons: [{ id: 'a', label: 'Give number' }, { id: 'b', label: 'Bye' }] } },
-      { id: 'input-1', type: 'input', position: { x: 0, y: 0 }, data: { prompt: 'Enter a number', variable: 'num', validation: 'number', retryText: 'Numbers only!' } },
+      { id: 'btns-1', type: 'buttons', position: { x: 0, y: 0 }, data: { nodeName: 'plan', text: 'Pick one:', saveAs: 'choice', buttons: [{ id: 'a', name: 'collect', label: 'Give number', value: 'collect_number' }, { id: 'b', name: 'goodbye', label: 'Bye', value: 'goodbye' }] } },
+      { id: 'input-1', type: 'input', position: { x: 0, y: 0 }, data: { nodeName: 'amount', prompt: 'Enter a number', variable: 'num', validation: 'number', retryText: 'Numbers only!' } },
       { id: 'cond-1', type: 'condition', position: { x: 0, y: 0 }, data: { left: '{{num}}', op: 'gt', right: '10' } },
       { id: 'http-1', type: 'http', position: { x: 0, y: 0 }, data: { method: 'GET', url: `${BASE}/api/health`, saveAs: 'h' } },
       { id: 'set-1', type: 'setvar', position: { x: 0, y: 0 }, data: { name: 'verdict', value: 'big {{num}}' } },
-      { id: 'msg-big', type: 'message', position: { x: 0, y: 0 }, data: { text: '{{verdict}} — api ok={{h.body.ok}} status={{h.status}}' } },
+      { id: 'msg-big', type: 'message', position: { x: 0, y: 0 }, data: { text: '{{verdict}} — choice={{{plan.collect}}} input={{{amount.num}}} api ok={{h.body.ok}} status={{h.status}}' } },
       { id: 'msg-small', type: 'message', position: { x: 0, y: 0 }, data: { text: 'Small: {{num}}' } },
       { id: 'end-1', type: 'end', position: { x: 0, y: 0 }, data: { text: 'Bye {{first_name}}!' } },
     ],
@@ -116,8 +131,32 @@ console.log('\n■ REST API');
     ],
   };
 
+  // Exercise portable credential requirements: the exporter must replace the
+  // internal ID with a logical name/type reference and the importer must map it
+  // back only to a credential owned by the destination account.
+  flow.nodes.find((n) => n.id === 'msg-welcome').data.credentialId = cred.json.credential.id;
   const saved = await api('PUT', `/api/bots/${botId}/flow`, { flow }, token);
   check('save draft flow', saved.status === 200);
+
+  const exported = await api('GET', `/api/bots/${botId}/flow/export`, null, token);
+  check('flow export is portable and secret-free', exported.status === 200
+    && exported.json.kind === 'telebot-builder/flow-export'
+    && exported.json.schemaVersion === 1
+    && exported.json.requirements.credentials.length === 1
+    && !JSON.stringify(exported.json).includes('TEST-TOKEN')
+    && !JSON.stringify(exported.json).includes(cred.json.credential.id));
+  const missingCredentialArchive = structuredClone(exported.json);
+  missingCredentialArchive.requirements.credentials[0].name = 'Missing credential';
+  const missingCredentialImport = await api('POST', `/api/bots/${botId}/flow/import`, { archive: missingCredentialArchive }, token);
+  check('flow import rejects missing credential mappings', missingCredentialImport.status === 422);
+  const duplicateCredential = await api('POST', '/api/credentials', { name: 'OpenAI', type: 'openai', data: { apiKey: 'sk-test-duplicate-1234567890' } }, token);
+  const credentialRef = exported.json.requirements.credentials[0].ref;
+  const ambiguousImport = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json }, token);
+  check('flow import rejects ambiguous credential mappings', ambiguousImport.status === 422);
+  const previewImport = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json, credentialMap: { [credentialRef]: cred.json.credential.id }, dryRun: true }, token);
+  check('flow import preflight validates without saving', previewImport.status === 200 && previewImport.json.dryRun === true && previewImport.json.flow.nodes.length === flow.nodes.length);
+  const imported = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json, credentialMap: { [credentialRef]: cred.json.credential.id } }, token);
+  check('flow import restores a validated draft', duplicateCredential.status === 201 && imported.status === 200 && imported.json.flow.nodes.length === flow.nodes.length);
 
   const val = await api('POST', `/api/bots/${botId}/flow/validate`, { flow }, token);
   check('flow validates clean', val.status === 200 && val.json.errors.length === 0, JSON.stringify(val.json.errors));
@@ -128,12 +167,28 @@ console.log('\n■ REST API');
   const broken = await api('POST', `/api/bots/${botId}/flow/publish`, { flow: { nodes: [], edges: [] } }, token);
   check('publish rejects empty flow', broken.status === 422);
 
+  const invalidReferenceFlow = structuredClone(flow);
+  invalidReferenceFlow.nodes.find((n) => n.id === 'input-1').data.variable = 'invalid.name';
+  const invalidReference = await api('POST', `/api/bots/${botId}/flow/publish`, { flow: invalidReferenceFlow }, token);
+  check('publish rejects invalid named-value identifiers', invalidReference.status === 422);
+
+  const unsupportedNodeFlow = structuredClone(flow);
+  unsupportedNodeFlow.nodes.push({ id: 'unknown-1', type: 'future_node', position: { x: 0, y: 0 }, data: {} });
+  unsupportedNodeFlow.edges.push({ id: 'e-unknown', source: 'msg-small', target: 'unknown-1' });
+  const unsupportedNode = await api('POST', `/api/bots/${botId}/flow/publish`, { flow: unsupportedNodeFlow }, token);
+  check('publish rejects unsupported node types', unsupportedNode.status === 422);
+
+  const malformedFlow = await api('POST', `/api/bots/${botId}/flow/validate`, { flow: { nodes: [null], edges: [] } }, token);
+  check('validation reports malformed flow JSON without a server error', malformedFlow.status === 200 && malformedFlow.json.errors.length > 0);
+
   // Ownership isolation
   const reg2 = await api('POST', '/api/auth/register', { email: 'eve@example.com', password: 'password123' });
   const stolen = await api('GET', `/api/bots/${botId}`, null, reg2.json.token);
   check('other users cannot see the bot', stolen.status === 404);
 
   botRow = await db.getBot(botId);
+  check('processed update claim de-duplicates delivery IDs',
+    await db.claimUpdate(botId, 'test-update-1') === true && await db.claimUpdate(botId, 'test-update-1') === false);
 }
 
 // ---- engine walk-through with a mock Telegram client ------------------------
@@ -176,6 +231,17 @@ console.log('\n■ flow engine (mock transport)');
   session = await db.getSession(botRow.id, '555');
   check('button routes to input prompt', session.status === 'awaiting_input' && sent[sent.length - 1].text === 'Enter a number');
 
+  // A stale keyboard tap must not override a newer input wait.
+  await run(cb(555, 'btn:btns-1:b', 31));
+  session = await db.getSession(botRow.id, '555');
+  check('stale callback cannot advance an input wait', session.status === 'awaiting_input' && session.node_id === 'input-1');
+
+  // A keyboard from a pre-publish flow can reference a node that no longer
+  // exists. It must be ignored without clearing the active wait.
+  await run(cb(555, 'btn:removed-node:old-button', 32));
+  session = await db.getSession(botRow.id, '555');
+  check('missing-node callback cannot clear an active wait', session.status === 'awaiting_input' && session.node_id === 'input-1');
+
   await run(msg(555, 'not-a-number', 4));
   check('invalid input retries', sent[sent.length - 1].text === 'Numbers only!');
   session = await db.getSession(botRow.id, '555');
@@ -188,7 +254,10 @@ console.log('\n■ flow engine (mock transport)');
   check('condition routed to HTTP node', Boolean(bigMsg));
   check('http result saved to variable', vars.h?.status === 200 && vars.h?.body?.ok === true, JSON.stringify(vars.h));
   check('setvar composed template', vars.verdict === 'big 15');
-  check('message templates resolved', bigMsg?.text.includes('big 15') && bigMsg?.text.includes('status=200'));
+  check('button value and accepted input persist for following nodes',
+    vars.choice === 'collect_number' && vars.last_button === 'Give number' && vars.last_button_value === 'collect_number' && vars.last_input === 15);
+  check('message templates resolve forwarded values',
+    bigMsg?.text.includes('big 15') && bigMsg?.text.includes('choice=collect_number') && bigMsg?.text.includes('input=15') && bigMsg?.text.includes('status=200'));
   check('session ended after end node', session.status === 'ended' && sent[sent.length - 1].text === 'Bye Ada!');
 
   // Small-number branch.
@@ -208,12 +277,20 @@ console.log('\n■ flow engine (mock transport)');
   const before = sent.length;
   await run(msg(557, 'knock knock', 22));
   check('new message restarts finished session', sent.slice(before).some((s) => s.text === 'Welcome Ada!'));
+  await run(cb(557, 'btn:btns-1:a', 23));
+  session = await db.getSession(botRow.id, '557');
+  const currentPlan = JSON.parse(session.variables)._nodeValues?.plan || {};
+  check('revisiting buttons replaces stale named choice values', currentPlan.collect === 'collect_number' && currentPlan.selected === 'collect' && !('goodbye' in currentPlan));
 
-  // Logs were written.
+  // Logs were written and redact credential-shaped fields before persistence.
+  log('info', 'redaction probe', 557, { apiKey: 'secret-key', nested: { token: 'secret-token', ok: true } });
+  await Promise.resolve();
   const logs = await db.listLogs(botRow.id, { limit: 500 });
   check('engine wrote bot logs', logs.length > 5);
   check('logs contain button press + condition evaluation',
     logs.some((l) => l.message.includes('Button')) && logs.some((l) => l.message.includes('Condition')));
+  const redactionLog = logs.find((l) => l.message === 'redaction probe');
+  check('logs redact nested credential-shaped fields', redactionLog && !redactionLog.data.includes('secret-key') && !redactionLog.data.includes('secret-token') && redactionLog.data.includes('[REDACTED]'));
 
   // Sessions API surface.
   const token2 = (await api('POST', '/api/auth/login', { email: 'ada@example.com', password: 'password123' })).json.token;

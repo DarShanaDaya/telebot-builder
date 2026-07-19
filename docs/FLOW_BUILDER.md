@@ -69,6 +69,18 @@ Every normal node has an `out` source handle unless it is an ending or branching
 
 Link buttons intentionally do not get an output handle because Telegram opens their URL directly. Button callbacks use the payload `btn:<node id>:<button id>` and resume the flow from the matching named edge.
 
+### Forwarding button and input values
+
+Non-link buttons can have a **Value** separate from their visible label. When a user selects one, its value is saved in the Buttons node's **Save selected value to** variable (default: `button_value`) before the connected branch runs. For example, a label of `Standard plan` with value `standard` can be used in every following field as `{{button_value}}`. If no value is supplied, the button label is used for compatibility with existing flows.
+
+The most recent selection is also always available as `{{last_button}}` (label) and `{{last_button_value}}` (value). An Input node saves its accepted response to its configured variable and also exposes `{{last_input}}` / `{{last_input_value}}`. These are session variables, so they remain available to all later nodes, conditions, messages, HTTP requests, and AI prompts along the chosen flow path.
+
+### Named-node references and picker
+
+Every newly added node has a **Node name** (machine-readable and unique) and a **Node label** (friendly canvas text). Nodes that produce a value also retain it in their namespace. Use triple braces to reference that value: `{{{node_name.value_name}}}`. For example, a Buttons node named `plan_choice` whose button value name is `standard` is referenced as `{{{plan_choice.standard}}}`; an Input node named `contact` saving to `email` is referenced as `{{{contact.email}}}`.
+
+The selected node's sidebar includes **Previous-node values**. It follows the incoming connections to show only values that can reach the selected node, grouped by node label and name. Click a token to copy the exact triple-brace reference. Button value names are configured alongside their labels and values.
+
 ### Pin alignment
 
 Dynamic pins are rendered inside the visual row they represent. The `.row-handle` class centers a pin at `top: 50%` of that row. This is important: pins must not use fixed offsets based on node height because labels, descriptions, and dynamic options change the node height.

@@ -346,6 +346,20 @@ textarea { resize: vertical; line-height: 1.45; }
 .props-cheatsheet p { color: var(--muted); font-size: 0.8rem; line-height: 1.5; }
 .btn-editor { display: flex; flex-direction: column; gap: 8px; }
 .btn-editor-row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 6px; align-items: center; }
+/* Button choices also have a machine-readable value that is forwarded through
+   the flow, in addition to their visible label and optional URL. */
+.button-value-row { grid-template-columns: 1fr 1fr 1.25fr 1.4fr auto; }
+.node-identity, .previous-values { margin: 0 0 14px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255, 255, 255, 0.025); }
+.node-identity summary, .previous-values summary { cursor: pointer; color: var(--text); font-size: 0.85rem; font-weight: 650; }
+.node-identity-fields { display: grid; gap: 8px; margin-top: 10px; }
+.previous-values > .field-hint { margin: 8px 0; }
+.previous-value-group { padding: 8px 0; border-top: 1px solid var(--border); }
+.previous-value-group:first-of-type { border-top: 0; }
+.previous-value-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 0.78rem; margin-bottom: 5px; }
+.previous-value-title code { color: var(--muted); font-size: 0.72rem; }
+.template-token { display: flex; width: 100%; justify-content: space-between; gap: 6px; align-items: center; margin-top: 4px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; font-size: 0.76rem; text-align: left; }
+.template-token:hover { border-color: var(--accent); color: var(--accent); }
+.template-token code { color: var(--muted); font-size: 0.7rem; overflow-wrap: anywhere; }
 
 /* meta section */
 .meta-section { margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }

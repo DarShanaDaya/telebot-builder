@@ -1,5 +1,8 @@
 import axios from 'axios';
-import { VM } from 'vm2';
+import dns from 'node:dns';
+import net from 'node:net';
+import http from 'node:http';
+import https from 'node:https';
 import { renderTemplate, renderDeep, evaluateCondition } from '../lib/template.js';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
@@ -14,21 +17,80 @@ import { db } from '../db/index.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Sandboxed VM for Function node
-function createSandbox() {
-  return new VM({
-    timeout: 5000,
-    sandbox: {
-      Math,
-      JSON,
-      Date,
-      console: { log: (...args) => console.log('[Function]', ...args) },
-      // Helper functions
-      parseJson: (s) => { try { return JSON.parse(s); } catch { return null; } },
-      toJson: (v) => JSON.stringify(v),
-    },
+export function isPrivateIp(address) {
+  const family = net.isIP(address);
+  if (family === 4) {
+    const [a, b] = address.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && (b === 0 || b === 168 || b === 2))
+      || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19 || b === 51))
+      || (a === 203 && b === 0) || a >= 224;
+  }
+  if (family === 6) {
+    const normalized = address.toLowerCase();
+    return normalized === '::1' || normalized === '::'
+      || normalized.startsWith('fc') || normalized.startsWith('fd')
+      || normalized.startsWith('fe8') || normalized.startsWith('fe9')
+      || normalized.startsWith('fea') || normalized.startsWith('feb')
+      || normalized.startsWith('::ffff:127.') || normalized.startsWith('::ffff:10.')
+      || normalized.startsWith('::ffff:192.168.') || normalized.startsWith('::ffff:169.254.');
+  }
+  return true;
+}
+
+function assertPublicAddress(address) {
+  if (!config.allowPrivateHttpTargets && isPrivateIp(address)) {
+    const err = new Error('HTTP target resolves to a blocked private or reserved network address.');
+    err.code = 'blocked_http_target';
+    throw err;
+  }
+}
+
+async function assertSafeHttpUrl(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    const err = new Error('HTTP node URL is invalid.');
+    err.code = 'invalid_http_url';
+    throw err;
+  }
+  if ((url.protocol !== 'https:' && (url.protocol !== 'http:' || !config.allowInsecureHttpTargets)) || url.username || url.password) {
+    const err = new Error('HTTP nodes only support credential-free HTTPS URLs.');
+    err.code = 'blocked_http_protocol';
+    throw err;
+  }
+  if (!config.allowPrivateHttpTargets && ['localhost', 'localhost.localdomain'].includes(url.hostname.toLowerCase())) {
+    const err = new Error('HTTP target hostname is blocked.');
+    err.code = 'blocked_http_target';
+    throw err;
+  }
+  if (net.isIP(url.hostname)) {
+    assertPublicAddress(url.hostname);
+  } else if (!config.allowPrivateHttpTargets) {
+    const records = await dns.promises.lookup(url.hostname, { all: true, verbatim: true });
+    if (!records.length) throw new Error('HTTP target hostname did not resolve.');
+    records.forEach((record) => assertPublicAddress(record.address));
+  }
+  return url;
+}
+
+function safeLookup(hostname, options, callback) {
+  dns.lookup(hostname, { all: true, verbatim: true }, (err, records) => {
+    if (err) return callback(err);
+    try {
+      const compatible = records.filter((record) => !options?.family || record.family === options.family);
+      const selected = compatible[0] || records[0];
+      assertPublicAddress(selected.address);
+      callback(null, selected.address, selected.family);
+    } catch (lookupErr) {
+      callback(lookupErr);
+    }
   });
 }
+
+const safeHttpAgent = new http.Agent({ lookup: safeLookup });
+const safeHttpsAgent = new https.Agent({ lookup: safeLookup });
 
 async function execStart(ctx, node) {
   return { next: ctx.nextEdge(node.id) };
@@ -98,6 +160,7 @@ async function execSetVar(ctx, node) {
     }
   }
   ctx.vars[d.name] = value;
+  ctx.recordNodeValue(node, d.name, value);
   return { next: ctx.nextEdge(node.id) };
 }
 
@@ -130,6 +193,14 @@ async function execHttp(ctx, node) {
     headers: {},
     timeout: Math.min(Number(d.timeoutMs) || 15000, config.maxHttpTimeoutMs),
     validateStatus: () => true,
+    // Do not allow a public URL to redirect into a private network. The
+    // custom lookup revalidates DNS at connection time to resist rebinding.
+    maxRedirects: 0,
+    maxContentLength: 1024 * 1024,
+    maxBodyLength: 1024 * 1024,
+    proxy: false,
+    httpAgent: safeHttpAgent,
+    httpsAgent: safeHttpsAgent,
   };
   for (const h of d.headers || []) {
     if (h && h.key) request.headers[h.key] = renderTemplate(h.value ?? '', tctx);
@@ -160,20 +231,34 @@ async function execHttp(ctx, node) {
     ctx.log('error', `HTTP node ${node.id} has no URL.`);
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
+  try {
+    await assertSafeHttpUrl(request.url);
+  } catch (err) {
+    ctx.log('error', `HTTP node ${node.id} blocked (${err.code || 'invalid_http_target'}).`);
+    if (d.saveAs) {
+      ctx.vars[d.saveAs] = { status: 0, error: err.code || 'invalid_http_target' };
+      ctx.recordNodeValue(node, d.saveAs, ctx.vars[d.saveAs]);
+    }
+    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
+  }
   ctx.log('info', `HTTP ${request.method} ${request.url}`);
   try {
     const resp = await axios(request);
     if (d.saveAs) {
       ctx.vars[d.saveAs] = { status: resp.status, body: resp.data };
+      ctx.recordNodeValue(node, d.saveAs, ctx.vars[d.saveAs]);
     }
-    if (resp.status >= 400) {
+    if (resp.status < 200 || resp.status >= 300) {
       ctx.log('warn', `HTTP ${request.method} ${request.url} → ${resp.status}`);
       return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id, 'success') || ctx.nextEdge(node.id) };
     }
     return { next: ctx.nextEdge(node.id, 'success') || ctx.nextEdge(node.id) };
   } catch (err) {
     ctx.log('error', `HTTP request failed: ${err.message}`);
-    if (d.saveAs) ctx.vars[d.saveAs] = { status: 0, error: err.message };
+    if (d.saveAs) {
+      ctx.vars[d.saveAs] = { status: 0, error: err.message };
+      ctx.recordNodeValue(node, d.saveAs, ctx.vars[d.saveAs]);
+    }
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
 }
@@ -199,12 +284,18 @@ async function execAi(ctx, node) {
       { headers: { Authorization: `Bearer ${credential.data.apiKey}` }, timeout: 45000 }
     );
     const reply = resp.choices?.[0]?.message?.content?.trim() || '';
-    if (d.saveAs) ctx.vars[d.saveAs] = reply;
+    if (d.saveAs) {
+      ctx.vars[d.saveAs] = reply;
+      ctx.recordNodeValue(node, d.saveAs, reply);
+    }
     if (d.sendReply !== false) await ctx.client.sendMessage(ctx.chatId, reply || '(empty response)');
     return { next: ctx.nextEdge(node.id, 'out') || ctx.nextEdge(node.id) };
   } catch (err) {
     ctx.log('error', `AI request failed: ${err.response?.data?.error?.message || err.message}`);
-    if (d.saveAs) ctx.vars[d.saveAs] = '';
+    if (d.saveAs) {
+      ctx.vars[d.saveAs] = '';
+      ctx.recordNodeValue(node, d.saveAs, '');
+    }
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
 }
@@ -229,7 +320,10 @@ async function execLoop(ctx, node) {
   const arrayVar = d.arrayVar || 'items';
   const itemVar = d.itemVar || 'item';
   const indexVar = d.indexVar || 'index';
-  const maxIterations = Math.max(0, Number(d.iterations) || 100);
+  // `0` is intentionally the editor's "unlimited" option. A platform-level
+  // execution step guard still prevents an unbounded request from running.
+  const configuredIterations = Number(d.iterations);
+  const maxIterations = Number.isFinite(configuredIterations) ? Math.max(0, configuredIterations) : 100;
 
   // Get the array from variables
   const array = ctx.vars[arrayVar];
@@ -251,7 +345,7 @@ async function execLoop(ctx, node) {
     loopState.index = 0;
   }
 
-  if (loopState.index >= array.length || loopState.index >= maxIterations) {
+  if (loopState.index >= array.length || (maxIterations > 0 && loopState.index >= maxIterations)) {
     // Loop complete
     delete session.loopState?.[node.id];
     return { next: ctx.nextEdge(node.id, 'done') };
@@ -265,7 +359,7 @@ async function execLoop(ctx, node) {
   if (!session.loopState) session.loopState = {};
   session.loopState[node.id] = loopState;
 
-  ctx.log('info', `Loop ${node.id}: iteration ${loopState.index + 1}/${Math.min(array.length, maxIterations)}`);
+  ctx.log('info', `Loop ${node.id}: iteration ${loopState.index + 1}/${maxIterations > 0 ? Math.min(array.length, maxIterations) : array.length}`);
   
   // Continue to loop body (iterate handle)
   return { next: ctx.nextEdge(node.id, 'iterate') };
@@ -304,50 +398,17 @@ async function execSwitch(ctx, node) {
 }
 
 async function execFunction(ctx, node) {
-  const d = node.data || {};
-  const code = d.code || '';
-  const params = d.params || [];
-  const saveAs = d.saveAs;
-
-  if (!code.trim()) {
-    ctx.log('warn', `Function node ${node.id} has no code.`);
-    return { next: ctx.nextEdge(node.id) };
-  }
-
-  try {
-    const vm = createSandbox();
-    
-    // Prepare parameters
-    const paramValues = {};
-    for (const p of params) {
-      paramValues[p] = ctx.vars[p];
-    }
-
-    // Wrap code in a function
-    const fnCode = `
-      (function(${params.join(', ')}) {
-        const vars = ${JSON.stringify(ctx.vars)};
-        ${code}
-      })
-    `;
-    
-    const fn = vm.run(fnCode);
-    const result = fn(...params.map(p => paramValues[p]));
-
-    if (saveAs) {
-      ctx.vars[saveAs] = result;
-    }
-    
-    ctx.log('info', `Function ${d.name || node.id} executed, result:`, result);
-    return { next: ctx.nextEdge(node.id, 'success') };
-  } catch (err) {
-    ctx.log('error', `Function ${d.name || node.id} failed: ${err.message}`);
-    if (saveAs) ctx.vars[saveAs] = { error: err.message };
-    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
-  }
+  // Intentionally unavailable until an isolated code-runner service exists.
+  // Never execute flow-authored JavaScript inside the API/runtime process.
+  ctx.log('error', `Function node ${node.id} is disabled until isolated code execution is available.`);
+  return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
 }
 
 async function execParallel(ctx, node) {
+  if (!config.allowExperimentalParallelNodes) {
+    ctx.log('error', `Parallel node ${node.id} is disabled until durable branch orchestration is available.`);
+    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
+  }
   const d = node.data || {};
   const branches = d.branches || [];
   const waitForAll = d.waitForAll !== false;
@@ -397,6 +458,10 @@ async function execParallel(ctx, node) {
 }
 
 async function execWebhook(ctx, node) {
+  if (!config.allowExperimentalWebhookNodes) {
+    ctx.log('error', `Webhook node ${node.id} is disabled until external webhook routing is available.`);
+    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
+  }
   const d = node.data || {};
   // This node is primarily a trigger entry point
   // When a webhook hits the endpoint, it creates/resumes a session at this node
@@ -406,6 +471,7 @@ async function execWebhook(ctx, node) {
   // Save webhook payload if configured
   if (d.saveAs && ctx.webhookData) {
     ctx.vars[d.saveAs] = ctx.webhookData;
+    ctx.recordNodeValue(node, d.saveAs, ctx.webhookData);
   }
   
   // Continue to next node
@@ -428,7 +494,7 @@ async function execLog(ctx, node) {
   }
   
   // Include all variables if requested
-  if (d.includeVars !== false) {
+  if (d.includeVars === true) {
     logData._vars = { ...ctx.vars };
   }
   

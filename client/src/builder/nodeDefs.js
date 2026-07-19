@@ -151,8 +151,8 @@ export const NODE_CATEGORIES = [
 
 export const PALETTE = [
   'start', 'message', 'buttons', 'input', 'condition', 'setvar', 'delay', 'end',
-  'loop', 'switch', 'function', 'parallel',
-  'http', 'ai', 'webhook',
+  'loop', 'switch',
+  'http', 'ai',
   'log',
 ];
 
@@ -224,7 +224,15 @@ export function defaultData(type) {
     case 'message':
       return { text: 'Hello {{first_name}} 👋', photoUrl: '' };
     case 'buttons':
-      return { text: 'What would you like to do?', nudgeText: '', buttons: [{ id: `b${Date.now().toString(36)}`, label: 'Option 1', url: '' }] };
+      return {
+        text: 'What would you like to do?',
+        nudgeText: '',
+        // The selected non-link button is available to following nodes as
+        // {{button_value}} by default. Each option may use a value different
+        // from the label the user sees.
+        saveAs: 'button_value',
+        buttons: [{ id: `b${Date.now().toString(36)}`, name: 'option_1', label: 'Option 1', value: 'Option 1', url: '' }],
+      };
     case 'input':
       return { prompt: 'Please type your answer:', variable: 'answer', validation: 'any', pattern: '', retryText: '', cancelText: '' };
     case 'condition':
@@ -291,7 +299,7 @@ export function defaultData(type) {
         level: 'info', // debug, info, warn, error
         message: 'Flow reached checkpoint',
         data: {}, // key-value pairs to log
-        includeVars: true,
+        includeVars: false,
       };
 
     default:

@@ -10,6 +10,7 @@ import { deployBot, stopBot, isRunning, runningInfo } from '../hub/manager.js';
 import { makeBotLogger } from '../runtime/engine.js';
 import { validateFlow } from './validate.js';
 import { config } from '../config.js';
+import { rateLimit } from '../lib/rate-limit.js';
 
 const MODES = ['polling', 'webhook'];
 
@@ -103,10 +104,11 @@ async function hydrateImportedFlow(archive, userId) {
 
 export function botsRouter() {
   const r = Router();
+  const tokenValidationRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, key: (req) => `${req.ip || 'unknown'}:${req.user?.id || 'anonymous'}` });
   r.use(requireAuth);
 
   // Validate a BotFather token against Telegram without creating a bot.
-  r.post('/validate-token', ah(async (req, res) => {
+  r.post('/validate-token', tokenValidationRateLimit, ah(async (req, res) => {
     const token = String(req.body?.token || '').trim();
     if (!/^\d+:[\w-]{20,}$/.test(token)) {
       return res.status(200).json({ ok: false, error: 'That doesn’t look like a BotFather token (format: 123456:ABC-DEF…).' });

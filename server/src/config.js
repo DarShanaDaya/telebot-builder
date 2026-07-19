@@ -69,6 +69,9 @@ export const config = {
   isVercel: Boolean(process.env.VERCEL),
   port: Number(process.env.PORT || 4000),
   publicBaseUrl,
+  // Production API access is same-origin unless explicit frontend origins are
+  // configured. Development remains permissive for the Vite dev server.
+  corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
   jwtSecret: secrets.jwtSecret,
   jwtExpiresIn: '7d',
   platformSecret: secrets.platformSecret,

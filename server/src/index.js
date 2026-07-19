@@ -17,7 +17,12 @@ export function buildApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-  app.use(cors());
+  app.use(cors({
+    origin(origin, callback) {
+      const allowed = config.env !== 'production' || !origin || config.corsOrigins.includes(origin);
+      callback(null, allowed);
+    },
+  }));
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (_req, res) => {

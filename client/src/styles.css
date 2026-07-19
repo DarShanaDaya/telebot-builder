@@ -310,7 +310,9 @@ textarea { resize: vertical; line-height: 1.45; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .tb-btn-list { display: flex; flex-direction: column; gap: 4px; padding: 0 8px 9px; }
-.tb-btn-row { position: relative; display: flex; }
+.tb-btn-row { position: relative; display: flex; align-items: center; min-height: 26px; }
+.tb-btn-row .react-flow__handle, .tb-dual-row .react-flow__handle, .row-handle { top: 50% !important; transform: translateY(-50%); }
+.tb-btn-row .react-flow__handle:hover, .tb-dual-row .react-flow__handle:hover, .row-handle:hover { transform: translateY(-50%) scale(1.25); }
 .tb-btn-chip {
   background: var(--bg-2); border: 1px solid var(--node-color); border-radius: 8px;
   padding: 3px 9px; font-size: 0.74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

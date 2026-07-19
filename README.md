@@ -209,3 +209,7 @@ POST /webhooks/telegram/:botId/:secret   (public, Telegram only)
 - Webhook triggers **from** external services into a flow
 - Flow templates & marketplace
 - Multi-language bot responses
+
+## 📚 Detailed flow documentation
+
+See [`docs/FLOW_BUILDER.md`](docs/FLOW_BUILDER.md) for the complete flow lifecycle, JSON format, output-handle IDs, button callback continuation, session persistence, validation rules, node-extension checklist, testing commands, and pin-alignment troubleshooting.

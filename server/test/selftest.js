@@ -129,6 +129,11 @@ console.log('\n■ REST API');
   const broken = await api('POST', `/api/bots/${botId}/flow/publish`, { flow: { nodes: [], edges: [] } }, token);
   check('publish rejects empty flow', broken.status === 422);
 
+  const invalidReferenceFlow = structuredClone(flow);
+  invalidReferenceFlow.nodes.find((n) => n.id === 'input-1').data.variable = 'invalid.name';
+  const invalidReference = await api('POST', `/api/bots/${botId}/flow/publish`, { flow: invalidReferenceFlow }, token);
+  check('publish rejects invalid named-value identifiers', invalidReference.status === 422);
+
   // Ownership isolation
   const reg2 = await api('POST', '/api/auth/register', { email: 'eve@example.com', password: 'password123' });
   const stolen = await api('GET', `/api/bots/${botId}`, null, reg2.json.token);
@@ -177,6 +182,11 @@ console.log('\n■ flow engine (mock transport)');
   session = await db.getSession(botRow.id, '555');
   check('button routes to input prompt', session.status === 'awaiting_input' && sent[sent.length - 1].text === 'Enter a number');
 
+  // A stale keyboard tap must not override a newer input wait.
+  await run(cb(555, 'btn:btns-1:b', 31));
+  session = await db.getSession(botRow.id, '555');
+  check('stale callback cannot advance an input wait', session.status === 'awaiting_input' && session.node_id === 'input-1');
+
   await run(msg(555, 'not-a-number', 4));
   check('invalid input retries', sent[sent.length - 1].text === 'Numbers only!');
   session = await db.getSession(botRow.id, '555');
@@ -212,6 +222,10 @@ console.log('\n■ flow engine (mock transport)');
   const before = sent.length;
   await run(msg(557, 'knock knock', 22));
   check('new message restarts finished session', sent.slice(before).some((s) => s.text === 'Welcome Ada!'));
+  await run(cb(557, 'btn:btns-1:a', 23));
+  session = await db.getSession(botRow.id, '557');
+  const currentPlan = JSON.parse(session.variables)._nodeValues?.plan || {};
+  check('revisiting buttons replaces stale named choice values', currentPlan.collect === 'collect_number' && currentPlan.selected === 'collect' && !('goodbye' in currentPlan));
 
   // Logs were written.
   const logs = await db.listLogs(botRow.id, { limit: 500 });

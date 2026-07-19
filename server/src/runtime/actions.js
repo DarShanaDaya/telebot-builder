@@ -240,7 +240,10 @@ async function execLoop(ctx, node) {
   const arrayVar = d.arrayVar || 'items';
   const itemVar = d.itemVar || 'item';
   const indexVar = d.indexVar || 'index';
-  const maxIterations = Math.max(0, Number(d.iterations) || 100);
+  // `0` is intentionally the editor's "unlimited" option. A platform-level
+  // execution step guard still prevents an unbounded request from running.
+  const configuredIterations = Number(d.iterations);
+  const maxIterations = Number.isFinite(configuredIterations) ? Math.max(0, configuredIterations) : 100;
 
   // Get the array from variables
   const array = ctx.vars[arrayVar];
@@ -262,7 +265,7 @@ async function execLoop(ctx, node) {
     loopState.index = 0;
   }
 
-  if (loopState.index >= array.length || loopState.index >= maxIterations) {
+  if (loopState.index >= array.length || (maxIterations > 0 && loopState.index >= maxIterations)) {
     // Loop complete
     delete session.loopState?.[node.id];
     return { next: ctx.nextEdge(node.id, 'done') };
@@ -276,7 +279,7 @@ async function execLoop(ctx, node) {
   if (!session.loopState) session.loopState = {};
   session.loopState[node.id] = loopState;
 
-  ctx.log('info', `Loop ${node.id}: iteration ${loopState.index + 1}/${Math.min(array.length, maxIterations)}`);
+  ctx.log('info', `Loop ${node.id}: iteration ${loopState.index + 1}/${maxIterations > 0 ? Math.min(array.length, maxIterations) : array.length}`);
   
   // Continue to loop body (iterate handle)
   return { next: ctx.nextEdge(node.id, 'iterate') };

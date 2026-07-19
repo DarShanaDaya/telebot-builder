@@ -41,6 +41,7 @@ const newId = () => `n${Date.now().toString(36)}_${idCounter++}`;
 
 const toNodeName = (value) => String(value || 'node')
   .trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'node';
+const isReferenceName = (value) => /^[A-Za-z][\w-]*$/.test(String(value || '').trim());
 
 function newNodeData(nodeType, existingNodes = []) {
   const base = toNodeName(nodeType);
@@ -55,11 +56,13 @@ function producedValues(node) {
   const d = node.data || {};
   const type = d.nodeType;
   if (!d.nodeName) return [];
-  if (type === 'buttons') return (d.buttons || []).filter((b) => b?.name).map((b) => ({ name: b.name, label: b.label || b.name }));
-  if (type === 'input') return d.variable ? [{ name: d.variable, label: d.variable }] : [];
+  if (type === 'buttons') return (d.buttons || [])
+    .filter((b) => b?.name && !b.url?.trim() && isReferenceName(b.name))
+    .map((b) => ({ name: b.name, label: b.label || b.name }));
+  if (type === 'input') return isReferenceName(d.variable) ? [{ name: d.variable, label: d.variable }] : [];
   if (['setvar', 'http', 'ai', 'function', 'webhook'].includes(type)) {
     const name = type === 'setvar' ? d.name : d.saveAs;
-    return name ? [{ name, label: name }] : [];
+    return isReferenceName(name) ? [{ name, label: name }] : [];
   }
   return [];
 }

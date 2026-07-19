@@ -1,6 +1,10 @@
 // Static analysis of a flow before publishing.
 // Returns { errors: [], warnings: [] } — errors block publishing.
 
+const REFERENCE_NAME_RE = /^[A-Za-z][\w-]*$/;
+
+const isReferenceName = (value) => typeof value === 'string' && REFERENCE_NAME_RE.test(value.trim());
+
 const NODE_LABELS = {
   start: 'Start',
   message: 'Message',
@@ -12,6 +16,12 @@ const NODE_LABELS = {
   ai: 'AI Reply',
   delay: 'Delay',
   end: 'End',
+  loop: 'Loop',
+  switch: 'Switch',
+  function: 'Function',
+  parallel: 'Parallel',
+  webhook: 'Webhook',
+  log: 'Log',
 };
 
 export function validateFlow(flow) {
@@ -34,7 +44,7 @@ export function validateFlow(flow) {
   for (const node of nodes) {
     const nodeName = typeof node.data?.nodeName === 'string' ? node.data.nodeName.trim() : '';
     if (!nodeName) continue; // Legacy flows may opt in gradually.
-    if (!/^[A-Za-z][\w-]*$/.test(nodeName)) {
+    if (!REFERENCE_NAME_RE.test(nodeName)) {
       errors.push(`Node name "${nodeName}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
       continue;
     }
@@ -90,7 +100,7 @@ export function validateFlow(flow) {
         for (const b of buttons) {
           if (!b.name?.trim()) {
             warnings.push(`Button "${b.label}" has no value name, so it cannot be used with a named-node reference.`);
-          } else if (!/^[A-Za-z][\w-]*$/.test(b.name.trim())) {
+          } else if (!isReferenceName(b.name)) {
             errors.push(`Button value name "${b.name}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
           } else if (buttonValueNames.has(b.name.trim())) {
             errors.push(`Button value name "${b.name}" is duplicated in the same Buttons node.`);
@@ -106,6 +116,7 @@ export function validateFlow(flow) {
       }
       case 'input':
         if (!d.variable?.trim()) errors.push(`${at} node needs a variable name to store the answer.`);
+        else if (!isReferenceName(d.variable)) errors.push(`${at} variable name "${d.variable}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'condition':
         if (!d.left?.trim()) errors.push(`${at} node needs a value on the left side.`);
@@ -115,13 +126,27 @@ export function validateFlow(flow) {
         break;
       case 'setvar':
         if (!d.name?.trim()) errors.push(`${at} node needs a variable name.`);
+        else if (!isReferenceName(d.name)) errors.push(`${at} variable name "${d.name}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'http':
         if (!d.url?.trim()) errors.push(`${at} node needs a URL.`);
+        if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} response variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'ai':
         if (!d.credentialId) errors.push(`${at} node needs an OpenAI credential.`);
         else if (!d.prompt?.trim()) errors.push(`${at} node needs a prompt.`);
+        if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} reply variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+        break;
+      case 'function':
+        if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} result variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+        break;
+      case 'webhook':
+        if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} payload variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+        break;
+      case 'loop':
+      case 'switch':
+      case 'parallel':
+      case 'log':
         break;
       case 'delay': {
         const s = Number(d.seconds);

@@ -51,13 +51,20 @@ function safeJson(text, fallback = {}) {
 
 const isReferenceName = (value) => /^[A-Za-z][\w-]*$/.test(String(value || ''));
 
-function recordNodeValue(vars, node, valueName, value) {
+function recordNodeValue(vars, node, valueName, value, { replace = false, selected } = {}) {
   const nodeName = node?.data?.nodeName;
-  if (!isReferenceName(nodeName) || !isReferenceName(valueName)) return;
+  if (!isReferenceName(nodeName) || !isReferenceName(valueName)) return false;
   const allNodeValues = vars._nodeValues && typeof vars._nodeValues === 'object' ? vars._nodeValues : {};
-  const currentNodeValues = allNodeValues[nodeName] && typeof allNodeValues[nodeName] === 'object' ? allNodeValues[nodeName] : {};
-  allNodeValues[nodeName] = { ...currentNodeValues, [valueName]: value };
+  const currentNodeValues = !replace && allNodeValues[nodeName] && typeof allNodeValues[nodeName] === 'object'
+    ? allNodeValues[nodeName]
+    : {};
+  allNodeValues[nodeName] = {
+    ...currentNodeValues,
+    ...(selected ? { selected } : {}),
+    [valueName]: value,
+  };
   vars._nodeValues = allNodeValues;
+  return true;
 }
 
 function buildCtx({ bot, client, log, chatId, from, flow, session, vars }) {
@@ -90,7 +97,7 @@ function buildCtx({ bot, client, log, chatId, from, flow, session, vars }) {
     vars,
     flow,
     templateCtx,
-    recordNodeValue: (node, valueName, value) => recordNodeValue(vars, node, valueName, value),
+    recordNodeValue: (node, valueName, value, options) => recordNodeValue(vars, node, valueName, value, options),
     nextEdge: (nodeId, handle) => nextEdgeOf(flow, nodeId, handle),
     resolveCredential: (id) => resolveCredential(bot.user_id, id),
     setWait: (type, nodeId) => {
@@ -261,8 +268,19 @@ async function handleCallback(ctx, session, vars, cb) {
     session.pending = null;
     return;
   }
-  const button = (node.data?.buttons || []).find((b) => b.id === buttonId);
-  const buttonLabel = button?.label || '';
+  // A callback is valid only for the button node the current session is
+  // waiting on. Telegram clients can send old inline keyboards after a flow
+  // changes, so never allow callback payload data to choose an arbitrary node.
+  if (session.status !== 'awaiting_callback' || session.node_id !== nodeId) {
+    ctx.log('warn', `Ignored stale callback for node "${nodeId}".`);
+    return;
+  }
+  const button = (node.data?.buttons || []).find((b) => b.id === buttonId && !b.url?.trim());
+  if (!button) {
+    ctx.log('warn', `Ignored unknown or link-button callback "${buttonId}" on node "${nodeId}".`);
+    return;
+  }
+  const buttonLabel = button.label || '';
   // A button may display friendly text while forwarding a stable machine value
   // (for example, "Standard plan" -> "standard"). Existing flows without a
   // value continue to forward their label.
@@ -278,7 +296,10 @@ async function handleCallback(ctx, session, vars, cb) {
   vars.last_button = buttonLabel;
   vars.last_button_value = buttonValue;
   if (saveAs) vars[saveAs] = buttonValue;
-  ctx.recordNodeValue(node, button?.name, buttonValue);
+  // A Buttons node represents one current selection. Replace its namespace so
+  // values from a prior visit (for example, "standard") cannot survive a new
+  // selection (for example, "premium").
+  ctx.recordNodeValue(node, button.name, buttonValue, { replace: true, selected: button.name });
   session.status = 'idle';
   session.pending = null;
   const next = ctx.nextEdge(nodeId, `btn-${buttonId}`) || ctx.nextEdge(nodeId);

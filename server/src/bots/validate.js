@@ -1,6 +1,9 @@
 // Static analysis of a flow before publishing.
 // Returns { errors: [], warnings: [] } — errors block publishing.
 
+import { config } from '../config.js';
+
+const EXPERIMENTAL_NODE_TYPES = new Set(['function', 'parallel', 'webhook']);
 const REFERENCE_NAME_RE = /^[A-Za-z][\w-]*$/;
 
 const isReferenceName = (value) => typeof value === 'string' && REFERENCE_NAME_RE.test(value.trim());
@@ -83,6 +86,10 @@ export function validateFlow(flow) {
   for (const node of nodes) {
     const d = node.data || {};
     const at = label(node);
+    if (EXPERIMENTAL_NODE_TYPES.has(node.type) && !config.allowExperimentalNodes) {
+      errors.push(`${at} nodes are disabled until their production execution model is available.`);
+      continue;
+    }
     switch (node.type) {
       case 'start':
         if (!outgoing(node.id).length) errors.push('Start node is not connected to anything.');
@@ -98,14 +105,15 @@ export function validateFlow(flow) {
         }
         const buttonValueNames = new Set();
         for (const b of buttons) {
-          if (!b.name?.trim()) {
+          const buttonName = typeof b.name === 'string' ? b.name.trim() : '';
+          if (!buttonName) {
             warnings.push(`Button "${b.label}" has no value name, so it cannot be used with a named-node reference.`);
-          } else if (!isReferenceName(b.name)) {
+          } else if (!isReferenceName(buttonName)) {
             errors.push(`Button value name "${b.name}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
-          } else if (buttonValueNames.has(b.name.trim())) {
+          } else if (buttonValueNames.has(buttonName)) {
             errors.push(`Button value name "${b.name}" is duplicated in the same Buttons node.`);
           } else {
-            buttonValueNames.add(b.name.trim());
+            buttonValueNames.add(buttonName);
           }
           if (b.url?.trim()) continue;
           if (!outgoing(node.id, `btn-${b.id}`).length && !outgoing(node.id).length) {
@@ -115,7 +123,7 @@ export function validateFlow(flow) {
         break;
       }
       case 'input':
-        if (!d.variable?.trim()) errors.push(`${at} node needs a variable name to store the answer.`);
+        if (typeof d.variable !== 'string' || !d.variable.trim()) errors.push(`${at} node needs a variable name to store the answer.`);
         else if (!isReferenceName(d.variable)) errors.push(`${at} variable name "${d.variable}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'condition':
@@ -125,7 +133,7 @@ export function validateFlow(flow) {
         }
         break;
       case 'setvar':
-        if (!d.name?.trim()) errors.push(`${at} node needs a variable name.`);
+        if (typeof d.name !== 'string' || !d.name.trim()) errors.push(`${at} node needs a variable name.`);
         else if (!isReferenceName(d.name)) errors.push(`${at} variable name "${d.name}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'http':

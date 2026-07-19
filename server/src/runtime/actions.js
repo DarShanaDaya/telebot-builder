@@ -319,6 +319,10 @@ async function execSwitch(ctx, node) {
 
 async function execFunction(ctx, node) {
   const d = node.data || {};
+  if (!config.allowExperimentalNodes) {
+    ctx.log('error', `Function node ${node.id} is disabled until isolated code execution is available.`);
+    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
+  }
   const code = d.code || '';
   const params = d.params || [];
   const saveAs = d.saveAs;
@@ -366,6 +370,10 @@ async function execFunction(ctx, node) {
 }
 
 async function execParallel(ctx, node) {
+  if (!config.allowExperimentalNodes) {
+    ctx.log('error', `Parallel node ${node.id} is disabled until durable branch orchestration is available.`);
+    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
+  }
   const d = node.data || {};
   const branches = d.branches || [];
   const waitForAll = d.waitForAll !== false;
@@ -415,6 +423,10 @@ async function execParallel(ctx, node) {
 }
 
 async function execWebhook(ctx, node) {
+  if (!config.allowExperimentalNodes) {
+    ctx.log('error', `Webhook node ${node.id} is disabled until external webhook routing is available.`);
+    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
+  }
   const d = node.data || {};
   // This node is primarily a trigger entry point
   // When a webhook hits the endpoint, it creates/resumes a session at this node

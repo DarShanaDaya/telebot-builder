@@ -12,7 +12,7 @@ import { renderTemplate } from '../lib/template.js';
 // sessions table so conversations survive restarts.
 // ---------------------------------------------------------------------------
 
-const MAX_STEPS = 40;
+const MAX_STEPS = config.maxFlowStepsPerUpdate;
 
 export function makeBotLogger(botId) {
   return (level, message, chatId = null, dataObj = null) => {
@@ -120,10 +120,15 @@ async function runFrom(ctx, session, nodeId) {
   let steps = 0;
   while (current) {
     if (++steps > MAX_STEPS) {
-      ctx.log('error', `Flow exceeded ${MAX_STEPS} steps — possible infinite loop. Session ended.`);
-      session.status = 'ended';
-      session.node_id = null;
-      session.pending = null;
+      ctx.log('error', `Flow exceeded ${MAX_STEPS} synchronous steps — possible infinite loop. Session paused.`);
+      session.status = 'failed';
+      session.node_id = current;
+      session.pending = JSON.stringify({ type: 'step_limit', nodeId: current, at: new Date().toISOString() });
+      try {
+        await ctx.client.sendMessage(ctx.chatId, 'This conversation reached a safety limit. Please send /start to try again.');
+      } catch {
+        // Keep the recoverable failed state if Telegram is unavailable.
+      }
       return;
     }
     const node = (ctx.flow.nodes || []).find((n) => n.id === current);
@@ -145,7 +150,16 @@ async function runFrom(ctx, session, nodeId) {
       current = result?.next || null;
     } catch (err) {
       ctx.log('error', `Node ${node.type} failed: ${err.message}`);
-      session.status = 'idle';
+      // Do not silently turn an execution failure into an idle conversation:
+      // the next arbitrary user message must not restart and duplicate work.
+      session.status = 'failed';
+      session.node_id = node.id;
+      session.pending = JSON.stringify({ type: 'error', nodeId: node.id, message: String(err.message).slice(0, 500), at: new Date().toISOString() });
+      try {
+        await ctx.client.sendMessage(ctx.chatId, 'Sorry — something went wrong. Please send /start to try again.');
+      } catch {
+        // Preserve the failed state even when the transport is unavailable.
+      }
       return;
     }
   }
@@ -236,7 +250,7 @@ export async function handleUpdate({ bot, client, update, log }) {
       const node = (flow.nodes || []).find((n) => n.id === session.node_id);
       const nudge = node?.data?.nudgeText?.trim() || 'Please tap one of the buttons above ⬆️ (or send /start to restart)';
       await client.sendMessage(String(chatId), nudge);
-    } else if (msg) {
+    } else if (msg && (session.status === 'idle' || session.status === 'ended')) {
       // Idle or ended conversation: any new message restarts the flow.
       const start = startNodeOf(flow);
       if (start) {
@@ -244,6 +258,8 @@ export async function handleUpdate({ bot, client, update, log }) {
         session.pending = null;
         await runFrom(ctx, session, start.id);
       }
+    } else if (msg && session.status === 'failed') {
+      await client.sendMessage(String(chatId), 'This conversation is paused after an error. Send /start to restart it.');
     }
   } catch (err) {
     log('error', `Update handling failed: ${err.message}`, chatId);
@@ -254,7 +270,6 @@ export async function handleUpdate({ bot, client, update, log }) {
 
 async function handleCallback(ctx, session, vars, cb) {
   const data = cb.data || '';
-  vars.last_callback = data;
   const match = /^btn:([^:]+):(.+)$/.exec(data);
   if (!match) {
     ctx.log('warn', `Unknown callback payload "${data}".`);
@@ -281,6 +296,7 @@ async function handleCallback(ctx, session, vars, cb) {
     return;
   }
   const buttonLabel = button.label || '';
+  vars.last_callback = data;
   // A button may display friendly text while forwarding a stable machine value
   // (for example, "Standard plan" -> "standard"). Existing flows without a
   // value continue to forward their label.

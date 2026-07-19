@@ -77,7 +77,14 @@ export const config = {
   clientDist: path.join(ROOT_DIR, 'client', 'dist'),
   // Safety limits
   maxFlowNodes: 500,
+  // A per-update safety ceiling. Waiting nodes yield execution, so this does
+  // not limit total conversation length; it prevents accidental synchronous
+  // cycles from monopolizing a worker.
+  maxFlowStepsPerUpdate: Math.max(1, Number(process.env.MAX_FLOW_STEPS_PER_UPDATE || 500)),
   maxHttpTimeoutMs: 30000,
   maxDelaySeconds: 600,
   logRetentionPerBot: 500,
+  // Function, Parallel and custom Webhook nodes are intentionally opt-in
+  // while their durable execution/security model is completed.
+  allowExperimentalNodes: process.env.ALLOW_EXPERIMENTAL_NODES === 'true',
 };

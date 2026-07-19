@@ -151,8 +151,8 @@ export const NODE_CATEGORIES = [
 
 export const PALETTE = [
   'start', 'message', 'buttons', 'input', 'condition', 'setvar', 'delay', 'end',
-  'loop', 'switch', 'function', 'parallel',
-  'http', 'ai', 'webhook',
+  'loop', 'switch',
+  'http', 'ai',
   'log',
 ];
 

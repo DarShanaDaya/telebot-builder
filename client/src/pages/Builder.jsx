@@ -53,12 +53,16 @@ function newNodeData(nodeType, existingNodes = []) {
   return { ...defaultData(nodeType), nodeType, nodeName, nodeLabel: NODE_DEFS[nodeType]?.label || nodeType };
 }
 
-function producedValues(node) {
+function producedValues(node, canReachSelected) {
   const d = node.data || {};
   const type = d.nodeType;
   if (!d.nodeName) return [];
   if (type === 'buttons') return (d.buttons || [])
     .filter((b) => b?.name && !b.url?.trim() && isReferenceName(b.name))
+    // A button value exists only on the branch connected to that button's
+    // output. Do not offer values from sibling branches that are guaranteed
+    // to be empty at the selected node.
+    .filter((b) => canReachSelected(`btn-${b.id}`))
     .map((b) => ({ name: b.name, label: b.label || b.name }));
   if (type === 'input') return isReferenceName(d.variable) ? [{ name: d.variable, label: d.variable }] : [];
   if (['setvar', 'http', 'ai', 'function', 'webhook'].includes(type)) {
@@ -175,12 +179,26 @@ export default function Builder() {
         pending.push(edge.source);
       }
     }
+    const reachMemo = new Map();
+    const canReach = (nodeId, seen = new Set()) => {
+      if (nodeId === selectedId) return true;
+      if (reachMemo.has(nodeId)) return reachMemo.get(nodeId);
+      if (seen.has(nodeId)) return false;
+      const nextSeen = new Set(seen).add(nodeId);
+      const result = edges.some((edge) => edge.source === nodeId && canReach(edge.target, nextSeen));
+      reachMemo.set(nodeId, result);
+      return result;
+    };
+    const handleCanReach = (nodeId, handle) => edges
+      .filter((edge) => edge.source === nodeId && (edge.sourceHandle || 'out') === handle)
+      .some((edge) => canReach(edge.target));
+
     return nodes
       .filter((node) => upstream.has(node.id) && node.data?.nodeName)
       .map((node) => ({
         nodeName: node.data.nodeName,
         nodeLabel: node.data.nodeLabel || NODE_DEFS[node.data.nodeType]?.label || node.data.nodeName,
-        values: producedValues(node),
+        values: producedValues(node, (handle) => handleCanReach(node.id, handle)),
       }))
       .filter((entry) => entry.values.length);
   }, [nodes, edges, selectedId]);

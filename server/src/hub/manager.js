@@ -43,8 +43,9 @@ async function dispatchUpdate(botId, update) {
   if (!bot || bot.status !== 'running') return;
   // Telegram can redeliver webhook/polling updates. Claim the platform update
   // before executing side effects so duplicate deliveries do not replay a flow.
-  if (update?.update_id != null) {
-    const claimed = await db.claimUpdate(botId, update.update_id);
+  const updateId = update?.update_id;
+  if (updateId != null) {
+    const claimed = await db.claimUpdate(botId, updateId);
     if (!claimed) return;
   }
   const inst = instances.get(botId);
@@ -58,7 +59,13 @@ async function dispatchUpdate(botId, update) {
       return;
     }
   }
-  await handleUpdate({ bot, client, update, log: makeBotLogger(botId) });
+  const handled = await handleUpdate({ bot, client, update, log: makeBotLogger(botId) });
+  if (!handled && updateId != null) {
+    // Permit Telegram to retry a delivery that failed before the session could
+    // be durably persisted. A transactional outbox remains the next step for
+    // exact side-effect recovery.
+    await db.releaseUpdate(botId, updateId);
+  }
 }
 
 export async function deployBot(botId) {

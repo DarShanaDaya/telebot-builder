@@ -184,6 +184,9 @@ export function createSqliteRepo() {
       );
       return result.changes === 1;
     },
+    async releaseUpdate(botId, updateId) {
+      db.prepare('DELETE FROM processed_updates WHERE bot_id = ? AND update_id = ?').run(botId, String(updateId));
+    },
 
     // ---- logs ------------------------------------------------------------
     async addLog(entry) {

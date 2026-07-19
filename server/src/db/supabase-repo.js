@@ -97,6 +97,9 @@ export function createSupabaseRepo({ url, serviceKey }) {
       if (error.code === '23505') return false;
       throw new Error(`Supabase (claimUpdate): ${error.message}`);
     },
+    async releaseUpdate(botId, updateId) {
+      await unwrap(sb.from('processed_updates').delete().eq('bot_id', botId).eq('update_id', String(updateId)), 'releaseUpdate');
+    },
 
     // ---- logs ----------------------------------------------------------
     async addLog(entry) {

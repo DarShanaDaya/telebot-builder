@@ -259,6 +259,7 @@ export async function handleUpdate({ bot, client, update, log }) {
   const ctx = buildCtx({ bot, client, log, chatId: String(chatId), from, flow, session, vars });
   const pending = safeJson(session.pending, null);
 
+  let handled = true;
   try {
     if (msg?.text === '/start') {
       const start = startNodeOf(flow);
@@ -291,10 +292,17 @@ export async function handleUpdate({ bot, client, update, log }) {
       await client.sendMessage(String(chatId), 'This conversation is paused after an error. Send /retry to try the failed step again, or /start to restart.');
     }
   } catch (err) {
-    log('error', `Update handling failed: ${err.message}`, chatId);
+    handled = false;
+    log('error', `Update handling failed: ${safeFailureCode(err, 'update_handling_failed')}`, chatId);
   } finally {
-    await persistSession(session, vars, from);
+    try {
+      await persistSession(session, vars, from);
+    } catch (err) {
+      handled = false;
+      log('error', `Session persistence failed: ${safeFailureCode(err, 'session_persistence_failed')}`, chatId);
+    }
   }
+  return handled;
 }
 
 async function handleCallback(ctx, session, vars, cb) {

@@ -39,6 +39,31 @@ const fromStored = (flow) => ({
 let idCounter = 1;
 const newId = () => `n${Date.now().toString(36)}_${idCounter++}`;
 
+const toNodeName = (value) => String(value || 'node')
+  .trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'node';
+
+function newNodeData(nodeType, existingNodes = []) {
+  const base = toNodeName(nodeType);
+  const used = new Set(existingNodes.map((n) => n.data?.nodeName).filter(Boolean));
+  let nodeName = base;
+  let suffix = 2;
+  while (used.has(nodeName)) nodeName = `${base}_${suffix++}`;
+  return { ...defaultData(nodeType), nodeType, nodeName, nodeLabel: NODE_DEFS[nodeType]?.label || nodeType };
+}
+
+function producedValues(node) {
+  const d = node.data || {};
+  const type = d.nodeType;
+  if (!d.nodeName) return [];
+  if (type === 'buttons') return (d.buttons || []).filter((b) => b?.name).map((b) => ({ name: b.name, label: b.label || b.name }));
+  if (type === 'input') return d.variable ? [{ name: d.variable, label: d.variable }] : [];
+  if (['setvar', 'http', 'ai', 'function', 'webhook'].includes(type)) {
+    const name = type === 'setvar' ? d.name : d.saveAs;
+    return name ? [{ name, label: name }] : [];
+  }
+  return [];
+}
+
 export default function Builder() {
   const { botId } = useParams();
   const wrapperRef = useRef(null);
@@ -108,9 +133,9 @@ export default function Builder() {
     const position = rfInstance.project({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
     if (nodeType !== 'start' && !nodes.some((n) => n.data.nodeType === 'start')) {
       // Auto-seed a Start node so flows are always runnable.
-      setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: position.x - 260, y: position.y }, data: { nodeType: 'start' } }));
+      setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: position.x - 260, y: position.y }, data: newNodeData('start', ns) }));
     }
-    const node = { id: newId(), type: 'tb', position, selected: true, data: { ...defaultData(nodeType), nodeType } };
+    const node = { id: newId(), type: 'tb', position, selected: true, data: newNodeData(nodeType, nodes) };
     markDirty();
     setNodes((ns) => ns.map((n) => ({ ...n, selected: false })).concat(node));
   }, [rfInstance, nodes, setNodes]);
@@ -121,15 +146,39 @@ export default function Builder() {
     const center = rfInstance.project({ x: bounds.width / 2 - 320, y: bounds.height / 2 });
     const jitter = (Math.random() - 0.5) * 60;
     if (nodeType !== 'start' && !nodes.some((n) => n.data.nodeType === 'start')) {
-      setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: center.x - 280, y: center.y }, data: { nodeType: 'start' } }));
+      setNodes((ns) => ns.concat({ id: 'start-1', type: 'tb', position: { x: center.x - 280, y: center.y }, data: newNodeData('start', ns) }));
     }
-    const node = { id: newId(), type: 'tb', position: { x: center.x + jitter, y: center.y + jitter }, selected: true, data: { ...defaultData(nodeType), nodeType } };
+    const node = { id: newId(), type: 'tb', position: { x: center.x + jitter, y: center.y + jitter }, selected: true, data: newNodeData(nodeType, nodes) };
     markDirty();
     setNodes((ns) => ns.map((n) => ({ ...n, selected: false })).concat(node));
   };
 
   const selectedNode = useMemo(() => nodes.find((n) => n.selected) || null, [nodes]);
   const selectedId = selectedNode?.id || null;
+
+  // Only show values produced by nodes that can reach the selected node. This
+  // keeps the picker useful even on large, branching flows.
+  const previousNodeValues = useMemo(() => {
+    if (!selectedId) return [];
+    const upstream = new Set();
+    const pending = [selectedId];
+    while (pending.length) {
+      const target = pending.pop();
+      for (const edge of edges) {
+        if (edge.target !== target || upstream.has(edge.source)) continue;
+        upstream.add(edge.source);
+        pending.push(edge.source);
+      }
+    }
+    return nodes
+      .filter((node) => upstream.has(node.id) && node.data?.nodeName)
+      .map((node) => ({
+        nodeName: node.data.nodeName,
+        nodeLabel: node.data.nodeLabel || NODE_DEFS[node.data.nodeType]?.label || node.data.nodeName,
+        values: producedValues(node),
+      }))
+      .filter((entry) => entry.values.length);
+  }, [nodes, edges, selectedId]);
 
   const updateData = useCallback((data) => {
     markDirty();
@@ -351,7 +400,7 @@ export default function Builder() {
           )}
         </div>
 
-        <PropertiesPanel node={selectedNode} credentials={credentials} onChange={updateData} onDelete={deleteNode} />
+        <PropertiesPanel node={selectedNode} credentials={credentials} previousNodeValues={previousNodeValues} onChange={updateData} onDelete={deleteNode} />
       </div>
 
       {issues && (issues.errors.length > 0 || issues.warnings.length > 0) && (

@@ -231,7 +231,7 @@ export function defaultData(type) {
         // {{button_value}} by default. Each option may use a value different
         // from the label the user sees.
         saveAs: 'button_value',
-        buttons: [{ id: `b${Date.now().toString(36)}`, label: 'Option 1', value: 'Option 1', url: '' }],
+        buttons: [{ id: `b${Date.now().toString(36)}`, name: 'option_1', label: 'Option 1', value: 'Option 1', url: '' }],
       };
     case 'input':
       return { prompt: 'Please type your answer:', variable: 'answer', validation: 'any', pattern: '', retryText: '', cancelText: '' };

@@ -49,6 +49,17 @@ function safeJson(text, fallback = {}) {
   }
 }
 
+const isReferenceName = (value) => /^[A-Za-z][\w-]*$/.test(String(value || ''));
+
+function recordNodeValue(vars, node, valueName, value) {
+  const nodeName = node?.data?.nodeName;
+  if (!isReferenceName(nodeName) || !isReferenceName(valueName)) return;
+  const allNodeValues = vars._nodeValues && typeof vars._nodeValues === 'object' ? vars._nodeValues : {};
+  const currentNodeValues = allNodeValues[nodeName] && typeof allNodeValues[nodeName] === 'object' ? allNodeValues[nodeName] : {};
+  allNodeValues[nodeName] = { ...currentNodeValues, [valueName]: value };
+  vars._nodeValues = allNodeValues;
+}
+
 function buildCtx({ bot, client, log, chatId, from, flow, session, vars }) {
   // Live template context: a Proxy so nodes that set variables mid-run (Set
   // Variable plus a following Message, etc.) see each other's updates.
@@ -79,6 +90,7 @@ function buildCtx({ bot, client, log, chatId, from, flow, session, vars }) {
     vars,
     flow,
     templateCtx,
+    recordNodeValue: (node, valueName, value) => recordNodeValue(vars, node, valueName, value),
     nextEdge: (nodeId, handle) => nextEdgeOf(flow, nodeId, handle),
     resolveCredential: (id) => resolveCredential(bot.user_id, id),
     setWait: (type, nodeId) => {
@@ -266,6 +278,7 @@ async function handleCallback(ctx, session, vars, cb) {
   vars.last_button = buttonLabel;
   vars.last_button_value = buttonValue;
   if (saveAs) vars[saveAs] = buttonValue;
+  ctx.recordNodeValue(node, button?.name, buttonValue);
   session.status = 'idle';
   session.pending = null;
   const next = ctx.nextEdge(nodeId, `btn-${buttonId}`) || ctx.nextEdge(nodeId);
@@ -318,6 +331,7 @@ async function handleInput(ctx, session, vars, msg) {
   vars[name] = inputValue;
   vars.last_input = inputValue;
   vars.last_input_value = inputValue;
+  ctx.recordNodeValue(node, name, inputValue);
   ctx.log('info', `Captured input → {{${name}}}`);
   session.status = 'idle';
   session.pending = null;

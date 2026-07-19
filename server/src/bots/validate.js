@@ -30,6 +30,20 @@ export function validateFlow(flow) {
   if (starts.length > 1) warnings.push('Multiple Start nodes found — only the first one runs.');
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const nodeNames = new Map();
+  for (const node of nodes) {
+    const nodeName = typeof node.data?.nodeName === 'string' ? node.data.nodeName.trim() : '';
+    if (!nodeName) continue; // Legacy flows may opt in gradually.
+    if (!/^[A-Za-z][\w-]*$/.test(nodeName)) {
+      errors.push(`Node name "${nodeName}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+      continue;
+    }
+    if (nodeNames.has(nodeName)) {
+      errors.push(`Node name "${nodeName}" is used more than once. Named-node references must be unique.`);
+    } else {
+      nodeNames.set(nodeName, node.id);
+    }
+  }
   for (const e of edges) {
     if (!byId.has(e.source) || !byId.has(e.target)) {
       errors.push('An edge points to a node that no longer exists.');
@@ -72,7 +86,17 @@ export function validateFlow(flow) {
           errors.push(`${at} node has no buttons.`);
           break;
         }
+        const buttonValueNames = new Set();
         for (const b of buttons) {
+          if (!b.name?.trim()) {
+            warnings.push(`Button "${b.label}" has no value name, so it cannot be used with a named-node reference.`);
+          } else if (!/^[A-Za-z][\w-]*$/.test(b.name.trim())) {
+            errors.push(`Button value name "${b.name}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
+          } else if (buttonValueNames.has(b.name.trim())) {
+            errors.push(`Button value name "${b.name}" is duplicated in the same Buttons node.`);
+          } else {
+            buttonValueNames.add(b.name.trim());
+          }
           if (b.url?.trim()) continue;
           if (!outgoing(node.id, `btn-${b.id}`).length && !outgoing(node.id).length) {
             warnings.push(`Button "${b.label}" has no connection — pressing it ends the conversation.`);

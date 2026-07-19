@@ -31,6 +31,7 @@ console.log('\n■ crypto & templating');
   const masked = maskSecrets({ apiKey: 'sk-abcdefghijklmnop' });
   check('masking shows only last 4', masked.apiKey.endsWith('mnop') && !masked.apiKey.includes('abcd'));
   check('template renders nested paths', renderTemplate('Hi {{first_name}}, total={{h.body.ok}}', { first_name: 'Ada', h: { body: { ok: true } } }) === 'Hi Ada, total=true');
+  check('triple-brace node reference renders namespaced value', renderTemplate('{{{plan.standard}}}', { _nodeValues: { plan: { standard: 'standard' } } }) === 'standard');
   check('condition gt', evaluateCondition({ left: '{{num}}', op: 'gt', right: '10' }, { num: 15 }) === true);
   check('condition contains', evaluateCondition({ left: 'hello world', op: 'contains', right: 'WORLD' }, {}) === true);
 }
@@ -92,12 +93,12 @@ console.log('\n■ REST API');
     nodes: [
       { id: 'start-1', type: 'start', position: { x: 0, y: 0 }, data: {} },
       { id: 'msg-welcome', type: 'message', position: { x: 0, y: 0 }, data: { text: 'Welcome {{first_name}}!' } },
-      { id: 'btns-1', type: 'buttons', position: { x: 0, y: 0 }, data: { text: 'Pick one:', saveAs: 'choice', buttons: [{ id: 'a', label: 'Give number', value: 'collect_number' }, { id: 'b', label: 'Bye', value: 'goodbye' }] } },
-      { id: 'input-1', type: 'input', position: { x: 0, y: 0 }, data: { prompt: 'Enter a number', variable: 'num', validation: 'number', retryText: 'Numbers only!' } },
+      { id: 'btns-1', type: 'buttons', position: { x: 0, y: 0 }, data: { nodeName: 'plan', text: 'Pick one:', saveAs: 'choice', buttons: [{ id: 'a', name: 'collect', label: 'Give number', value: 'collect_number' }, { id: 'b', name: 'goodbye', label: 'Bye', value: 'goodbye' }] } },
+      { id: 'input-1', type: 'input', position: { x: 0, y: 0 }, data: { nodeName: 'amount', prompt: 'Enter a number', variable: 'num', validation: 'number', retryText: 'Numbers only!' } },
       { id: 'cond-1', type: 'condition', position: { x: 0, y: 0 }, data: { left: '{{num}}', op: 'gt', right: '10' } },
       { id: 'http-1', type: 'http', position: { x: 0, y: 0 }, data: { method: 'GET', url: `${BASE}/api/health`, saveAs: 'h' } },
       { id: 'set-1', type: 'setvar', position: { x: 0, y: 0 }, data: { name: 'verdict', value: 'big {{num}}' } },
-      { id: 'msg-big', type: 'message', position: { x: 0, y: 0 }, data: { text: '{{verdict}} — choice={{choice}} input={{last_input}} api ok={{h.body.ok}} status={{h.status}}' } },
+      { id: 'msg-big', type: 'message', position: { x: 0, y: 0 }, data: { text: '{{verdict}} — choice={{{plan.collect}}} input={{{amount.num}}} api ok={{h.body.ok}} status={{h.status}}' } },
       { id: 'msg-small', type: 'message', position: { x: 0, y: 0 }, data: { text: 'Small: {{num}}' } },
       { id: 'end-1', type: 'end', position: { x: 0, y: 0 }, data: { text: 'Bye {{first_name}}!' } },
     ],

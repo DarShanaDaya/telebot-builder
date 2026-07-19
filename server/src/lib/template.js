@@ -10,8 +10,14 @@ export function resolvePath(obj, path) {
 
 export function renderTemplate(str, ctx) {
   if (str == null) return str;
-  return String(str).replace(/\{\{\s*([\w.$-]+)\s*\}\}/g, (match, expr) => {
-    const val = resolvePath(ctx, expr);
+  // Double braces read regular session values ({{answer}}). Triple braces are
+  // intentionally reserved for values emitted by a named flow node, so a
+  // value can be referenced without colliding with ordinary variable names:
+  // {{{plan_choice.standard}}}.
+  return String(str).replace(/\{\{\{\s*([\w.$-]+)\s*\}\}\}|\{\{\s*([\w.$-]+)\s*\}\}/g, (match, nodeExpr, expr) => {
+    const val = nodeExpr
+      ? resolvePath(resolvePath(ctx, '_nodeValues'), nodeExpr)
+      : resolvePath(ctx, expr);
     if (val == null || val === undefined) return '';
     if (typeof val === 'object') {
       try {

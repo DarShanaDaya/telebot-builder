@@ -98,6 +98,7 @@ async function execSetVar(ctx, node) {
     }
   }
   ctx.vars[d.name] = value;
+  ctx.recordNodeValue(node, d.name, value);
   return { next: ctx.nextEdge(node.id) };
 }
 
@@ -165,6 +166,7 @@ async function execHttp(ctx, node) {
     const resp = await axios(request);
     if (d.saveAs) {
       ctx.vars[d.saveAs] = { status: resp.status, body: resp.data };
+      ctx.recordNodeValue(node, d.saveAs, ctx.vars[d.saveAs]);
     }
     if (resp.status >= 400) {
       ctx.log('warn', `HTTP ${request.method} ${request.url} → ${resp.status}`);
@@ -173,7 +175,10 @@ async function execHttp(ctx, node) {
     return { next: ctx.nextEdge(node.id, 'success') || ctx.nextEdge(node.id) };
   } catch (err) {
     ctx.log('error', `HTTP request failed: ${err.message}`);
-    if (d.saveAs) ctx.vars[d.saveAs] = { status: 0, error: err.message };
+    if (d.saveAs) {
+      ctx.vars[d.saveAs] = { status: 0, error: err.message };
+      ctx.recordNodeValue(node, d.saveAs, ctx.vars[d.saveAs]);
+    }
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
 }
@@ -199,12 +204,18 @@ async function execAi(ctx, node) {
       { headers: { Authorization: `Bearer ${credential.data.apiKey}` }, timeout: 45000 }
     );
     const reply = resp.choices?.[0]?.message?.content?.trim() || '';
-    if (d.saveAs) ctx.vars[d.saveAs] = reply;
+    if (d.saveAs) {
+      ctx.vars[d.saveAs] = reply;
+      ctx.recordNodeValue(node, d.saveAs, reply);
+    }
     if (d.sendReply !== false) await ctx.client.sendMessage(ctx.chatId, reply || '(empty response)');
     return { next: ctx.nextEdge(node.id, 'out') || ctx.nextEdge(node.id) };
   } catch (err) {
     ctx.log('error', `AI request failed: ${err.response?.data?.error?.message || err.message}`);
-    if (d.saveAs) ctx.vars[d.saveAs] = '';
+    if (d.saveAs) {
+      ctx.vars[d.saveAs] = '';
+      ctx.recordNodeValue(node, d.saveAs, '');
+    }
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
 }
@@ -336,13 +347,17 @@ async function execFunction(ctx, node) {
 
     if (saveAs) {
       ctx.vars[saveAs] = result;
+      ctx.recordNodeValue(node, saveAs, result);
     }
     
     ctx.log('info', `Function ${d.name || node.id} executed, result:`, result);
     return { next: ctx.nextEdge(node.id, 'success') };
   } catch (err) {
     ctx.log('error', `Function ${d.name || node.id} failed: ${err.message}`);
-    if (saveAs) ctx.vars[saveAs] = { error: err.message };
+    if (saveAs) {
+      ctx.vars[saveAs] = { error: err.message };
+      ctx.recordNodeValue(node, saveAs, ctx.vars[saveAs]);
+    }
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
 }
@@ -406,6 +421,7 @@ async function execWebhook(ctx, node) {
   // Save webhook payload if configured
   if (d.saveAs && ctx.webhookData) {
     ctx.vars[d.saveAs] = ctx.webhookData;
+    ctx.recordNodeValue(node, d.saveAs, ctx.webhookData);
   }
   
   // Continue to next node

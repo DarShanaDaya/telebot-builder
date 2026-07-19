@@ -25,6 +25,7 @@ const edgeStyle = {
 
 // Stored payloads keep only stable fields.
 const toStored = (nodes, edges, viewport) => JSON.parse(JSON.stringify({
+  schemaVersion: 1,
   nodes: nodes.map((n) => ({ id: n.id, type: n.data.nodeType, position: n.position, data: n.data })),
   edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
   viewport,
@@ -70,6 +71,7 @@ function producedValues(node) {
 export default function Builder() {
   const { botId } = useParams();
   const wrapperRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [rfInstance, setRfInstance] = useState(null);
   const [bot, setBot] = useState(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -212,6 +214,49 @@ export default function Builder() {
     }
   };
 
+  const exportFlow = async () => {
+    setBusy('export');
+    try {
+      const { data } = await api.get(`/bots/${botId}/flow/export`);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `telebot-flow-${botId}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast('Flow exported — secrets were excluded');
+    } catch (err) {
+      showToast(apiError(err, 'Could not export flow'), 'error');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const importFlow = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) return showToast('Flow export must be smaller than 2 MB.', 'error');
+    if (!window.confirm('Import will replace this bot’s draft. Your published flow will not change. Continue?')) return;
+    setBusy('import');
+    try {
+      const archive = JSON.parse(await file.text());
+      const { data } = await api.post(`/bots/${botId}/flow/import`, { archive });
+      const loadedFlow = fromStored(data.flow);
+      setNodes(loadedFlow.nodes);
+      setEdges(loadedFlow.edges);
+      viewportRef.current = loadedFlow.viewport || null;
+      setDirty(false);
+      setIssues(data.warnings?.length ? { errors: [], warnings: data.warnings } : null);
+      showToast('Flow imported as draft — validate and publish when ready');
+    } catch (err) {
+      showToast(err instanceof SyntaxError ? 'The selected file is not valid JSON.' : apiError(err, 'Could not import flow'), 'error');
+    } finally {
+      setBusy('');
+    }
+  };
+
   const validate = async () => {
     setBusy('validate');
     try {
@@ -318,6 +363,9 @@ export default function Builder() {
           {dirty && <span className="pill warn">unsaved</span>}
         </div>
         <div className="builder-actions">
+          <input ref={fileInputRef} type="file" accept="application/json,.json" hidden onChange={importFlow} />
+          <button className="btn ghost sm" disabled={Boolean(busy)} onClick={() => fileInputRef.current?.click()}>Import</button>
+          <button className="btn ghost sm" disabled={Boolean(busy)} onClick={exportFlow}>Export</button>
           <button className="btn ghost sm" disabled={busy === 'validate'} onClick={validate}>Validate</button>
           <button className="btn ghost sm" disabled={busy === 'save' || !dirty} onClick={saveDraft}>{busy === 'save' ? 'Saving…' : 'Save draft'}</button>
           <button className="btn primary sm" disabled={busy === 'publish'} onClick={publish}>{busy === 'publish' ? 'Publishing…' : 'Publish'}</button>

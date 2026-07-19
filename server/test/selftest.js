@@ -130,6 +130,14 @@ console.log('\n■ REST API');
   const saved = await api('PUT', `/api/bots/${botId}/flow`, { flow }, token);
   check('save draft flow', saved.status === 200);
 
+  const exported = await api('GET', `/api/bots/${botId}/flow/export`, null, token);
+  check('flow export is portable and secret-free', exported.status === 200
+    && exported.json.kind === 'telebot-builder/flow-export'
+    && exported.json.schemaVersion === 1
+    && !JSON.stringify(exported.json).includes('TEST-TOKEN'));
+  const imported = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json }, token);
+  check('flow import restores a validated draft', imported.status === 200 && imported.json.flow.nodes.length === flow.nodes.length);
+
   const val = await api('POST', `/api/bots/${botId}/flow/validate`, { flow }, token);
   check('flow validates clean', val.status === 200 && val.json.errors.length === 0, JSON.stringify(val.json.errors));
 

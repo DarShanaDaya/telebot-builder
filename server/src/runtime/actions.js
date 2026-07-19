@@ -1,4 +1,8 @@
 import axios from 'axios';
+import dns from 'node:dns';
+import net from 'node:net';
+import http from 'node:http';
+import https from 'node:https';
 import { renderTemplate, renderDeep, evaluateCondition } from '../lib/template.js';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
@@ -12,6 +16,81 @@ import { db } from '../db/index.js';
 // ---------------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function isPrivateIp(address) {
+  const family = net.isIP(address);
+  if (family === 4) {
+    const [a, b] = address.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && (b === 0 || b === 168 || b === 2))
+      || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19 || b === 51))
+      || (a === 203 && b === 0) || a >= 224;
+  }
+  if (family === 6) {
+    const normalized = address.toLowerCase();
+    return normalized === '::1' || normalized === '::'
+      || normalized.startsWith('fc') || normalized.startsWith('fd')
+      || normalized.startsWith('fe8') || normalized.startsWith('fe9')
+      || normalized.startsWith('fea') || normalized.startsWith('feb')
+      || normalized.startsWith('::ffff:127.') || normalized.startsWith('::ffff:10.')
+      || normalized.startsWith('::ffff:192.168.') || normalized.startsWith('::ffff:169.254.');
+  }
+  return true;
+}
+
+function assertPublicAddress(address) {
+  if (!config.allowPrivateHttpTargets && isPrivateIp(address)) {
+    const err = new Error('HTTP target resolves to a blocked private or reserved network address.');
+    err.code = 'blocked_http_target';
+    throw err;
+  }
+}
+
+async function assertSafeHttpUrl(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    const err = new Error('HTTP node URL is invalid.');
+    err.code = 'invalid_http_url';
+    throw err;
+  }
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
+    const err = new Error('HTTP nodes only support credential-free http(s) URLs.');
+    err.code = 'blocked_http_protocol';
+    throw err;
+  }
+  if (!config.allowPrivateHttpTargets && ['localhost', 'localhost.localdomain'].includes(url.hostname.toLowerCase())) {
+    const err = new Error('HTTP target hostname is blocked.');
+    err.code = 'blocked_http_target';
+    throw err;
+  }
+  if (net.isIP(url.hostname)) {
+    assertPublicAddress(url.hostname);
+  } else if (!config.allowPrivateHttpTargets) {
+    const records = await dns.promises.lookup(url.hostname, { all: true, verbatim: true });
+    if (!records.length) throw new Error('HTTP target hostname did not resolve.');
+    records.forEach((record) => assertPublicAddress(record.address));
+  }
+  return url;
+}
+
+function safeLookup(hostname, options, callback) {
+  dns.lookup(hostname, { all: true, verbatim: true }, (err, records) => {
+    if (err) return callback(err);
+    try {
+      const compatible = records.filter((record) => !options?.family || record.family === options.family);
+      const selected = compatible[0] || records[0];
+      assertPublicAddress(selected.address);
+      callback(null, selected.address, selected.family);
+    } catch (lookupErr) {
+      callback(lookupErr);
+    }
+  });
+}
+
+const safeHttpAgent = new http.Agent({ lookup: safeLookup });
+const safeHttpsAgent = new https.Agent({ lookup: safeLookup });
 
 async function execStart(ctx, node) {
   return { next: ctx.nextEdge(node.id) };
@@ -114,6 +193,14 @@ async function execHttp(ctx, node) {
     headers: {},
     timeout: Math.min(Number(d.timeoutMs) || 15000, config.maxHttpTimeoutMs),
     validateStatus: () => true,
+    // Do not allow a public URL to redirect into a private network. The
+    // custom lookup revalidates DNS at connection time to resist rebinding.
+    maxRedirects: 0,
+    maxContentLength: 1024 * 1024,
+    maxBodyLength: 1024 * 1024,
+    proxy: false,
+    httpAgent: safeHttpAgent,
+    httpsAgent: safeHttpsAgent,
   };
   for (const h of d.headers || []) {
     if (h && h.key) request.headers[h.key] = renderTemplate(h.value ?? '', tctx);
@@ -142,6 +229,16 @@ async function execHttp(ctx, node) {
   }
   if (!request.url) {
     ctx.log('error', `HTTP node ${node.id} has no URL.`);
+    return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
+  }
+  try {
+    await assertSafeHttpUrl(request.url);
+  } catch (err) {
+    ctx.log('error', `HTTP node ${node.id} blocked (${err.code || 'invalid_http_target'}).`);
+    if (d.saveAs) {
+      ctx.vars[d.saveAs] = { status: 0, error: err.code || 'invalid_http_target' };
+      ctx.recordNodeValue(node, d.saveAs, ctx.vars[d.saveAs]);
+    }
     return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id) };
   }
   ctx.log('info', `HTTP ${request.method} ${request.url}`);

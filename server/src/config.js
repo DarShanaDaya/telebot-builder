@@ -88,6 +88,9 @@ export const config = {
   // cycles from monopolizing a worker.
   maxFlowStepsPerUpdate: boundedPositiveInteger(process.env.MAX_FLOW_STEPS_PER_UPDATE, 500, { min: 1, max: 5000 }),
   maxHttpTimeoutMs: 30000,
+  // Private-network egress is never allowed in production. Local integration
+  // tests may opt in explicitly before the config module loads.
+  allowPrivateHttpTargets: process.env.NODE_ENV !== 'production' && process.env.ALLOW_PRIVATE_HTTP_TARGETS === 'true',
   maxDelaySeconds: 600,
   logRetentionPerBot: 500,
   // Incomplete nodes are individually opt-in only outside production. Function

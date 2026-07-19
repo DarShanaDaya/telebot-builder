@@ -17,7 +17,7 @@ import { db } from '../db/index.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function isPrivateIp(address) {
+export function isPrivateIp(address) {
   const family = net.isIP(address);
   if (family === 4) {
     const [a, b] = address.split('.').map(Number);

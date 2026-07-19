@@ -26,6 +26,7 @@ const { boundedPositiveInteger } = await import('../src/config.js');
 const { db } = await import('../src/db/index.js');
 const { buildApp } = await import('../src/index.js');
 const { handleUpdate, makeBotLogger } = await import('../src/runtime/engine.js');
+const { isPrivateIp } = await import('../src/runtime/actions.js');
 
 // ---- unit: crypto + templating ---------------------------------------------
 console.log('\n■ crypto & templating');
@@ -44,6 +45,9 @@ console.log('\n■ crypto & templating');
     && boundedPositiveInteger('Infinity', 500, { min: 1, max: 5000 }) === 500
     && boundedPositiveInteger('0', 500, { min: 1, max: 5000 }) === 500
     && boundedPositiveInteger('501', 500, { min: 1, max: 5000 }) === 501);
+  check('HTTP egress identifies private and reserved targets',
+    isPrivateIp('127.0.0.1') && isPrivateIp('10.0.0.1') && isPrivateIp('169.254.169.254')
+    && isPrivateIp('192.168.1.1') && isPrivateIp('::1') && !isPrivateIp('8.8.8.8'));
 }
 
 // ---- API + engine -----------------------------------------------------------

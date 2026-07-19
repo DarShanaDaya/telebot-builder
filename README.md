@@ -91,7 +91,7 @@ Deploys then register `https://…/webhooks/telegram/<botId>/<secret>` with Tele
 | --- | --- |
 | ✅ Frontend (static SPA) | ❌ Long-polling bots (needs a persistent process — deploys are rejected with a clear error) |
 | ✅ Full REST API as a serverless function | ❌ SQLite (read-only fs → **Supabase required**) |
-| ✅ **Webhook-mode bots** — perfect fit for serverless | |
+| ⚠️ Webhook-mode bot execution is currently disabled pending a durable queue/worker | |
 | ✅ Sessions, credentials, logs, multi-user auth | |
 
 ### Steps
@@ -108,16 +108,16 @@ Deploys then register `https://…/webhooks/telegram/<botId>/<secret>` with Tele
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase *service_role* key |
 | `PUBLIC_BASE_URL` | `https://<your-app>.vercel.app` |
 
-4. **Deploy**, create an account, add a bot and choose **Webhook** when deploying it. (If you forget Supabase, API calls return a precise "Database not configured…" message instead of an obscure crash.)
+4. **Deploy** for the frontend and REST API. Bot execution on serverless is intentionally disabled until the durable queue/worker architecture is available; use the persistent Railway/Render deployment below for live bots. (If you forget Supabase, API calls return a precise "Database not configured…" message instead of an obscure crash.)
 
-> ⚠️ Set `PUBLIC_BASE_URL` to your final Vercel URL *and redeploy* if it changes (e.g. after adding a custom domain) — deployed webhook bots point at that URL.
+> ℹ️ `PUBLIC_BASE_URL` remains useful for API links, but serverless bot execution is disabled until durable worker support is implemented.
 
 ### Want polling bots too? Split hosting
 
 Keep the **frontend on Vercel** and host the **backend on a persistent server** — ready-made configs are included (see below): [`railway.toml`](railway.toml) for Railway, [`render.yaml`](render.yaml) for Render (both polling and webhook modes work there, with SQLite or Supabase):
 
 1. Deploy this repo to Railway/Render — full app served from one process (`npm start`). You can even just use THAT full deployment and skip Vercel entirely.
-2. If you still prefer Vercel for the frontend: deploy with build env `VITE_API_URL=https://your-backend-host` — the client ([`src/api.js`](client/src/api.js)) then points all API calls there. CORS on the backend is already open.
+2. If you still prefer Vercel for the frontend: deploy with build env `VITE_API_URL=https://your-backend-host` — the client ([`src/api.js`](client/src/api.js)) then points all API calls there. Set `CORS_ORIGINS` on the backend to the Vercel frontend origin.
 
 ## 🚂 Deploy to Railway (polling ✅ + webhook ✅)
 

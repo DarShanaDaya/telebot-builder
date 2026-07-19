@@ -71,10 +71,10 @@ async function dispatchUpdate(botId, update) {
 export async function deployBot(botId) {
   const bot = await db.getBot(botId);
   if (!bot) throw new Error('Bot not found');
-  if (config.isServerless && bot.mode !== 'webhook') {
+  if (config.isServerless) {
     throw new Error(
-      'Long polling requires a long-running server, which serverless hosts (Vercel) cannot provide. ' +
-      'Switch this bot to webhook mode (PUBLIC_BASE_URL must be set), or host the backend on a persistent server.'
+      'Bot execution is disabled on serverless hosts until a durable queue/worker is configured. ' +
+      'Use a persistent single-worker deployment for polling or webhook bots.'
     );
   }
   await stopBot(botId, { keepStatus: true });

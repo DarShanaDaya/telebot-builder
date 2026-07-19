@@ -69,6 +69,12 @@ Every normal node has an `out` source handle unless it is an ending or branching
 
 Link buttons intentionally do not get an output handle because Telegram opens their URL directly. Button callbacks use the payload `btn:<node id>:<button id>` and resume the flow from the matching named edge.
 
+### Forwarding button and input values
+
+Non-link buttons can have a **Value** separate from their visible label. When a user selects one, its value is saved in the Buttons node's **Save selected value to** variable (default: `button_value`) before the connected branch runs. For example, a label of `Standard plan` with value `standard` can be used in every following field as `{{button_value}}`. If no value is supplied, the button label is used for compatibility with existing flows.
+
+The most recent selection is also always available as `{{last_button}}` (label) and `{{last_button_value}}` (value). An Input node saves its accepted response to its configured variable and also exposes `{{last_input}}` / `{{last_input_value}}`. These are session variables, so they remain available to all later nodes, conditions, messages, HTTP requests, and AI prompts along the chosen flow path.
+
 ### Pin alignment
 
 Dynamic pins are rendered inside the visual row they represent. The `.row-handle` class centers a pin at `top: 50%` of that row. This is important: pins must not use fixed offsets based on node height because labels, descriptions, and dynamic options change the node height.

@@ -346,6 +346,9 @@ textarea { resize: vertical; line-height: 1.45; }
 .props-cheatsheet p { color: var(--muted); font-size: 0.8rem; line-height: 1.5; }
 .btn-editor { display: flex; flex-direction: column; gap: 8px; }
 .btn-editor-row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 6px; align-items: center; }
+/* Button choices also have a machine-readable value that is forwarded through
+   the flow, in addition to their visible label and optional URL. */
+.button-value-row { grid-template-columns: 1fr 1.25fr 1.4fr auto; }
 
 /* meta section */
 .meta-section { margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }

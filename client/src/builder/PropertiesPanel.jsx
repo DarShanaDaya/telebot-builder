@@ -20,13 +20,17 @@ function ButtonsEditor({ data, onChange }) {
     const next = buttons.map((b, idx) => (idx === i ? { ...b, ...patch } : b));
     set(data, onChange, 'buttons', next);
   };
-  const add = () => set(data, onChange, 'buttons', [...buttons, { id: `b${Date.now().toString(36)}`, label: `Option ${buttons.length + 1}`, url: '' }]);
+  const add = () => {
+    const label = `Option ${buttons.length + 1}`;
+    set(data, onChange, 'buttons', [...buttons, { id: `b${Date.now().toString(36)}`, label, value: label, url: '' }]);
+  };
   const remove = (i) => set(data, onChange, 'buttons', buttons.filter((_, idx) => idx !== i));
   return (
     <div className="btn-editor">
       {buttons.map((b, i) => (
-        <div className="btn-editor-row" key={b.id}>
+        <div className="btn-editor-row button-value-row" key={b.id}>
           <input value={b.label} placeholder="Button label" onChange={(e) => update(i, { label: e.target.value })} />
+          <input value={b.value ?? ''} placeholder="Value forwarded to next nodes (defaults to label)" onChange={(e) => update(i, { value: e.target.value })} />
           <input value={b.url || ''} placeholder="URL (optional — makes it a link button)" onChange={(e) => update(i, { url: e.target.value })} />
           <button className="icon-btn" title="Remove button" onClick={() => remove(i)}>✕</button>
         </div>
@@ -209,6 +213,9 @@ export default function PropertiesPanel({ node, credentials, onChange, onDelete 
             </Field>
             <Field label="Buttons">
               <ButtonsEditor data={d} onChange={onChange} />
+            </Field>
+            <Field label="Save selected value to" hint="Every following node can use this as {{variable}}. Blank uses button_value.">
+              <input value={d.saveAs ?? 'button_value'} onChange={(e) => set(d, onChange, 'saveAs', e.target.value.replace(/\s/g, '_'))} placeholder="button_value" />
             </Field>
             <Field label="Reminder text (optional)" hint="Sent when the user types instead of tapping a button.">
               <input value={d.nudgeText || ''} onChange={(e) => set(d, onChange, 'nudgeText', e.target.value)} placeholder="Please tap a button above ⬆️" />

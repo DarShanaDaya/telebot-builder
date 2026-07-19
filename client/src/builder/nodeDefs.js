@@ -224,7 +224,15 @@ export function defaultData(type) {
     case 'message':
       return { text: 'Hello {{first_name}} 👋', photoUrl: '' };
     case 'buttons':
-      return { text: 'What would you like to do?', nudgeText: '', buttons: [{ id: `b${Date.now().toString(36)}`, label: 'Option 1', url: '' }] };
+      return {
+        text: 'What would you like to do?',
+        nudgeText: '',
+        // The selected non-link button is available to following nodes as
+        // {{button_value}} by default. Each option may use a value different
+        // from the label the user sees.
+        saveAs: 'button_value',
+        buttons: [{ id: `b${Date.now().toString(36)}`, label: 'Option 1', value: 'Option 1', url: '' }],
+      };
     case 'input':
       return { prompt: 'Please type your answer:', variable: 'answer', validation: 'any', pattern: '', retryText: '', cancelText: '' };
     case 'condition':

@@ -92,12 +92,12 @@ console.log('\n■ REST API');
     nodes: [
       { id: 'start-1', type: 'start', position: { x: 0, y: 0 }, data: {} },
       { id: 'msg-welcome', type: 'message', position: { x: 0, y: 0 }, data: { text: 'Welcome {{first_name}}!' } },
-      { id: 'btns-1', type: 'buttons', position: { x: 0, y: 0 }, data: { text: 'Pick one:', buttons: [{ id: 'a', label: 'Give number' }, { id: 'b', label: 'Bye' }] } },
+      { id: 'btns-1', type: 'buttons', position: { x: 0, y: 0 }, data: { text: 'Pick one:', saveAs: 'choice', buttons: [{ id: 'a', label: 'Give number', value: 'collect_number' }, { id: 'b', label: 'Bye', value: 'goodbye' }] } },
       { id: 'input-1', type: 'input', position: { x: 0, y: 0 }, data: { prompt: 'Enter a number', variable: 'num', validation: 'number', retryText: 'Numbers only!' } },
       { id: 'cond-1', type: 'condition', position: { x: 0, y: 0 }, data: { left: '{{num}}', op: 'gt', right: '10' } },
       { id: 'http-1', type: 'http', position: { x: 0, y: 0 }, data: { method: 'GET', url: `${BASE}/api/health`, saveAs: 'h' } },
       { id: 'set-1', type: 'setvar', position: { x: 0, y: 0 }, data: { name: 'verdict', value: 'big {{num}}' } },
-      { id: 'msg-big', type: 'message', position: { x: 0, y: 0 }, data: { text: '{{verdict}} — api ok={{h.body.ok}} status={{h.status}}' } },
+      { id: 'msg-big', type: 'message', position: { x: 0, y: 0 }, data: { text: '{{verdict}} — choice={{choice}} input={{last_input}} api ok={{h.body.ok}} status={{h.status}}' } },
       { id: 'msg-small', type: 'message', position: { x: 0, y: 0 }, data: { text: 'Small: {{num}}' } },
       { id: 'end-1', type: 'end', position: { x: 0, y: 0 }, data: { text: 'Bye {{first_name}}!' } },
     ],
@@ -188,7 +188,10 @@ console.log('\n■ flow engine (mock transport)');
   check('condition routed to HTTP node', Boolean(bigMsg));
   check('http result saved to variable', vars.h?.status === 200 && vars.h?.body?.ok === true, JSON.stringify(vars.h));
   check('setvar composed template', vars.verdict === 'big 15');
-  check('message templates resolved', bigMsg?.text.includes('big 15') && bigMsg?.text.includes('status=200'));
+  check('button value and accepted input persist for following nodes',
+    vars.choice === 'collect_number' && vars.last_button === 'Give number' && vars.last_button_value === 'collect_number' && vars.last_input === 15);
+  check('message templates resolve forwarded values',
+    bigMsg?.text.includes('big 15') && bigMsg?.text.includes('choice=collect_number') && bigMsg?.text.includes('input=15') && bigMsg?.text.includes('status=200'));
   check('session ended after end node', session.status === 'ended' && sent[sent.length - 1].text === 'Bye Ada!');
 
   // Small-number branch.

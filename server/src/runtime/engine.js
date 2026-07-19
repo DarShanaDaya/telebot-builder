@@ -3,6 +3,7 @@ import { db } from '../db/index.js';
 import { config } from '../config.js';
 import { EXECUTORS } from './actions.js';
 import { resolveCredential } from '../credentials/service.js';
+import { renderTemplate } from '../lib/template.js';
 
 // ---------------------------------------------------------------------------
 // Flow runtime engine. Transport-agnostic: both the long-polling manager and
@@ -249,8 +250,22 @@ async function handleCallback(ctx, session, vars, cb) {
     return;
   }
   const button = (node.data?.buttons || []).find((b) => b.id === buttonId);
-  ctx.log('info', `Button "${button?.label || buttonId}" pressed`);
-  vars.last_button = button?.label || '';
+  const buttonLabel = button?.label || '';
+  // A button may display friendly text while forwarding a stable machine value
+  // (for example, "Standard plan" -> "standard"). Existing flows without a
+  // value continue to forward their label.
+  const configuredValue = button?.value;
+  const buttonValue = renderTemplate(
+    configuredValue == null || configuredValue === '' ? buttonLabel : configuredValue,
+    ctx.templateCtx
+  );
+  const saveAs = String(node.data?.saveAs || 'button_value').trim();
+  ctx.log('info', `Button "${buttonLabel || buttonId}" pressed`);
+  // Keep universal aliases as well as the node's configured variable. This
+  // makes a choice available to every subsequent node, including old flows.
+  vars.last_button = buttonLabel;
+  vars.last_button_value = buttonValue;
+  if (saveAs) vars[saveAs] = buttonValue;
   session.status = 'idle';
   session.pending = null;
   const next = ctx.nextEdge(nodeId, `btn-${buttonId}`) || ctx.nextEdge(nodeId);
@@ -296,7 +311,13 @@ async function handleInput(ctx, session, vars, msg) {
   }
 
   const name = d.variable || 'input';
-  vars[name] = d.validation === 'number' ? Number(text) : text;
+  const inputValue = d.validation === 'number' ? Number(text) : text;
+  // Preserve both the input node's named value and universal aliases. The
+  // same session variable object is used by runFrom, so all following nodes
+  // on the selected branch can immediately template these values.
+  vars[name] = inputValue;
+  vars.last_input = inputValue;
+  vars.last_input_value = inputValue;
   ctx.log('info', `Captured input → {{${name}}}`);
   session.status = 'idle';
   session.pending = null;

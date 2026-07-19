@@ -145,6 +145,10 @@ console.log('\n■ REST API');
     && exported.json.requirements.credentials.length === 1
     && !JSON.stringify(exported.json).includes('TEST-TOKEN')
     && !JSON.stringify(exported.json).includes(cred.json.credential.id));
+  const missingCredentialArchive = structuredClone(exported.json);
+  missingCredentialArchive.requirements.credentials[0].name = 'Missing credential';
+  const missingCredentialImport = await api('POST', `/api/bots/${botId}/flow/import`, { archive: missingCredentialArchive }, token);
+  check('flow import rejects missing credential mappings', missingCredentialImport.status === 422);
   const imported = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json }, token);
   check('flow import restores a validated draft', imported.status === 200 && imported.json.flow.nodes.length === flow.nodes.length);
 

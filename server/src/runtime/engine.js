@@ -90,6 +90,8 @@ function buildCtx({ bot, client, log, chatId, from, flow, session, vars }) {
       session.node_id = null;
       session.pending = null;
     },
+    // Expose session for advanced nodes (loop, parallel)
+    session,
   };
 }
 
@@ -135,6 +137,11 @@ async function runFrom(ctx, session, nodeId) {
 }
 
 async function persistSession(session, vars, from) {
+  // Store loop and parallel state in variables for persistence
+  const varsToSave = { ...vars };
+  if (session.loopState) varsToSave._loopState = session.loopState;
+  if (session.parallelState) varsToSave._parallelState = session.parallelState;
+  
   await db.upsertSession({
     id: session.id,
     bot_id: session.bot_id,
@@ -142,7 +149,7 @@ async function persistSession(session, vars, from) {
     user_json: JSON.stringify(from || {}),
     node_id: session.node_id,
     status: session.status,
-    variables: JSON.stringify(vars ?? {}),
+    variables: JSON.stringify(varsToSave),
     pending: session.pending,
     last_activity: new Date().toISOString(),
     created_at: session.created_at,
@@ -184,6 +191,12 @@ export async function handleUpdate({ bot, client, update, log }) {
     };
   }
   const vars = safeJson(session.variables, {});
+  // Restore loop and parallel state from variables
+  if (vars._loopState) session.loopState = vars._loopState;
+  if (vars._parallelState) session.parallelState = vars._parallelState;
+  // Clean up internal vars
+  delete vars._loopState;
+  delete vars._parallelState;
   if (msg?.text != null) vars.text = msg.text;
   const ctx = buildCtx({ bot, client, log, chatId: String(chatId), from, flow, session, vars });
   const pending = safeJson(session.pending, null);

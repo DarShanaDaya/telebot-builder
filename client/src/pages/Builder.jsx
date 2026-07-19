@@ -10,7 +10,7 @@ import ReactFlow, {
   useEdgesState,
 } from 'reactflow';
 import { api, apiError } from '../api';
-import { NODE_DEFS, PALETTE, defaultData } from '../builder/nodeDefs';
+import { NODE_DEFS, PALETTE, defaultData, NODE_CATEGORIES } from '../builder/nodeDefs';
 import TbNode from '../builder/TbNode';
 import PropertiesPanel from '../builder/PropertiesPanel';
 
@@ -55,6 +55,13 @@ export default function Builder() {
   const [deployOpen, setDeployOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const viewportRef = useRef(null);
+
+  // Palette state
+  const [expandedCategories, setExpandedCategories] = useState(() => {
+    // Default: expand core and logic, collapse others
+    return new Set(['core', 'logic']);
+  });
+  const [paletteSearch, setPaletteSearch] = useState('');
 
   const showToast = (msg, kind = 'ok') => {
     setToast({ msg, kind });
@@ -211,6 +218,42 @@ export default function Builder() {
 
   const running = bot?.live?.running;
 
+  // Build categorized palette
+  const categorizedPalette = useMemo(() => {
+    const result = {};
+    PALETTE.forEach((type) => {
+      const def = NODE_DEFS[type];
+      if (!def) return;
+      const cat = def.category || 'core';
+      if (!result[cat]) result[cat] = [];
+      result[cat].push(type);
+    });
+    return result;
+  }, []);
+
+  const filteredPalette = useMemo(() => {
+    if (!paletteSearch) return categorizedPalette;
+    const search = paletteSearch.toLowerCase();
+    const result = {};
+    Object.entries(categorizedPalette).forEach(([cat, types]) => {
+      const filtered = types.filter((t) => {
+        const def = NODE_DEFS[t];
+        return def.label.toLowerCase().includes(search) || def.description.toLowerCase().includes(search) || t.includes(search);
+      });
+      if (filtered.length) result[cat] = filtered;
+    });
+    return result;
+  }, [categorizedPalette, paletteSearch]);
+
+  const toggleCategory = (cat) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
+
   return (
     <div className="builder-shell">
       <header className="builder-topbar">
@@ -234,21 +277,48 @@ export default function Builder() {
 
       <div className="builder-main">
         <aside className="palette">
-          <p className="palette-title">Nodes</p>
-          {PALETTE.map((type) => {
-            const def = NODE_DEFS[type];
+          <div className="palette-search-wrap">
+            <input
+              type="text"
+              className="palette-search"
+              placeholder="Search nodes…"
+              value={paletteSearch}
+              onChange={(e) => setPaletteSearch(e.target.value)}
+            />
+          </div>
+          {NODE_CATEGORIES.map((cat) => {
+            const types = filteredPalette[cat.id];
+            if (!types?.length) return null;
+            const isExpanded = expandedCategories.has(cat.id);
             return (
-              <div
-                key={type}
-                className="palette-item"
-                draggable
-                onDragStart={(e) => e.dataTransfer.setData('application/telebot-node', type)}
-                onClick={() => addNodeAtViewport(type)}
-                style={{ '--node-color': def.color }}
-                title={def.description}
-              >
-                <span className="palette-icon">{def.icon}</span>
-                <span>{def.label}</span>
+              <div key={cat.id} className="palette-category">
+                <button className="palette-category-header" onClick={() => toggleCategory(cat.id)} style={{ '--cat-color': cat.color }}>
+                  <span className="palette-cat-icon">{cat.icon}</span>
+                  <span className="palette-cat-label">{cat.label}</span>
+                  <span className={`palette-cat-count`}>{types.length}</span>
+                  <span className={`palette-cat-chevron ${isExpanded ? 'open' : ''}`}>▼</span>
+                </button>
+                {isExpanded && (
+                  <div className="palette-category-items">
+                    {types.map((type) => {
+                      const def = NODE_DEFS[type];
+                      return (
+                        <div
+                          key={type}
+                          className="palette-item"
+                          draggable
+                          onDragStart={(e) => e.dataTransfer.setData('application/telebot-node', type)}
+                          onClick={() => addNodeAtViewport(type)}
+                          style={{ '--node-color': def.color }}
+                          title={def.description}
+                        >
+                          <span className="palette-icon">{def.icon}</span>
+                          <span>{def.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

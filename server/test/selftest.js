@@ -158,6 +158,9 @@ console.log('\n■ REST API');
   const unsupportedNode = await api('POST', `/api/bots/${botId}/flow/publish`, { flow: unsupportedNodeFlow }, token);
   check('publish rejects unsupported node types', unsupportedNode.status === 422);
 
+  const malformedFlow = await api('POST', `/api/bots/${botId}/flow/validate`, { flow: { nodes: [null], edges: [] } }, token);
+  check('validation reports malformed flow JSON without a server error', malformedFlow.status === 200 && malformedFlow.json.errors.length > 0);
+
   // Ownership isolation
   const reg2 = await api('POST', '/api/auth/register', { email: 'eve@example.com', password: 'password123' });
   const stolen = await api('GET', `/api/bots/${botId}`, null, reg2.json.token);

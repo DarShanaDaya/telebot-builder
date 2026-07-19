@@ -11,6 +11,7 @@ const EXPERIMENTAL_NODE_CAPABILITY = {
 const REFERENCE_NAME_RE = /^[A-Za-z][\w-]*$/;
 
 const isReferenceName = (value) => typeof value === 'string' && REFERENCE_NAME_RE.test(value.trim());
+const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
 
 const NODE_LABELS = {
   start: 'Start',
@@ -36,6 +37,15 @@ export function validateFlow(flow) {
   const warnings = [];
   const nodes = flow?.nodes || [];
   const edges = flow?.edges || [];
+
+  if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+    errors.push('Flow must contain nodes[] and edges[] arrays.');
+    return { errors, warnings };
+  }
+  if (nodes.some((node) => !node || typeof node !== 'object') || edges.some((edge) => !edge || typeof edge !== 'object')) {
+    errors.push('Flow contains an invalid node or edge object.');
+    return { errors, warnings };
+  }
 
   if (!nodes.length) {
     errors.push('The flow is empty — add a Start node to begin.');
@@ -100,10 +110,10 @@ export function validateFlow(flow) {
         if (!outgoing(node.id).length) errors.push('Start node is not connected to anything.');
         break;
       case 'message':
-        if (!d.text?.trim() && !d.photoUrl?.trim()) errors.push(`${at} node has no text or photo.`);
+        if (!hasText(d.text) && !hasText(d.photoUrl)) errors.push(`${at} node has no text or photo.`);
         break;
       case 'buttons': {
-        const buttons = (d.buttons || []).filter((b) => b && b.label);
+        const buttons = (Array.isArray(d.buttons) ? d.buttons : []).filter((b) => b && hasText(b.label));
         if (!buttons.length) {
           errors.push(`${at} node has no buttons.`);
           break;
@@ -120,7 +130,7 @@ export function validateFlow(flow) {
           } else {
             buttonValueNames.add(buttonName);
           }
-          if (b.url?.trim()) continue;
+          if (hasText(b.url)) continue;
           if (!outgoing(node.id, `btn-${b.id}`).length && !outgoing(node.id).length) {
             warnings.push(`Button "${b.label}" has no connection — pressing it ends the conversation.`);
           }
@@ -132,7 +142,7 @@ export function validateFlow(flow) {
         else if (!isReferenceName(d.variable)) errors.push(`${at} variable name "${d.variable}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'condition':
-        if (!d.left?.trim()) errors.push(`${at} node needs a value on the left side.`);
+        if (!hasText(d.left)) errors.push(`${at} node needs a value on the left side.`);
         if (!outgoing(node.id, 'true').length && !outgoing(node.id, 'false').length) {
           warnings.push(`${at} node has no true/false connections.`);
         }
@@ -142,12 +152,12 @@ export function validateFlow(flow) {
         else if (!isReferenceName(d.name)) errors.push(`${at} variable name "${d.name}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'http':
-        if (!d.url?.trim()) errors.push(`${at} node needs a URL.`);
+        if (!hasText(d.url)) errors.push(`${at} node needs a URL.`);
         if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} response variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'ai':
         if (!d.credentialId) errors.push(`${at} node needs an OpenAI credential.`);
-        else if (!d.prompt?.trim()) errors.push(`${at} node needs a prompt.`);
+        else if (!hasText(d.prompt)) errors.push(`${at} node needs a prompt.`);
         if (d.saveAs && !isReferenceName(d.saveAs)) errors.push(`${at} reply variable "${d.saveAs}" must start with a letter and use only letters, numbers, underscores, or hyphens.`);
         break;
       case 'function':

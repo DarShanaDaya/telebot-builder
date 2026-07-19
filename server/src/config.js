@@ -91,6 +91,7 @@ export const config = {
   // Private-network egress is never allowed in production. Local integration
   // tests may opt in explicitly before the config module loads.
   allowPrivateHttpTargets: process.env.NODE_ENV !== 'production' && process.env.ALLOW_PRIVATE_HTTP_TARGETS === 'true',
+  allowInsecureHttpTargets: process.env.NODE_ENV !== 'production' && process.env.ALLOW_INSECURE_HTTP_TARGETS === 'true',
   maxDelaySeconds: 600,
   logRetentionPerBot: 500,
   // Incomplete nodes are individually opt-in only outside production. Function

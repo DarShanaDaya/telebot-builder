@@ -55,8 +55,8 @@ async function assertSafeHttpUrl(rawUrl) {
     err.code = 'invalid_http_url';
     throw err;
   }
-  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
-    const err = new Error('HTTP nodes only support credential-free http(s) URLs.');
+  if ((url.protocol !== 'https:' && (url.protocol !== 'http:' || !config.allowInsecureHttpTargets)) || url.username || url.password) {
+    const err = new Error('HTTP nodes only support credential-free HTTPS URLs.');
     err.code = 'blocked_http_protocol';
     throw err;
   }
@@ -248,7 +248,7 @@ async function execHttp(ctx, node) {
       ctx.vars[d.saveAs] = { status: resp.status, body: resp.data };
       ctx.recordNodeValue(node, d.saveAs, ctx.vars[d.saveAs]);
     }
-    if (resp.status >= 400) {
+    if (resp.status < 200 || resp.status >= 300) {
       ctx.log('warn', `HTTP ${request.method} ${request.url} → ${resp.status}`);
       return { next: ctx.nextEdge(node.id, 'error') || ctx.nextEdge(node.id, 'success') || ctx.nextEdge(node.id) };
     }

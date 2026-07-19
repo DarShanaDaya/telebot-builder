@@ -11,6 +11,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'telebot-test-'));
 // The integration HTTP node intentionally calls the local test API. Production
 // defaults deny private-network egress; this is an explicit test-only opt-in.
 process.env.ALLOW_PRIVATE_HTTP_TARGETS = 'true';
+process.env.ALLOW_INSECURE_HTTP_TARGETS = 'true';
 
 const results = [];
 const check = (name, cond, extra = '') => {

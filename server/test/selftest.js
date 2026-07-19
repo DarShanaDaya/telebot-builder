@@ -131,6 +131,10 @@ console.log('\n■ REST API');
     ],
   };
 
+  // Exercise portable credential requirements: the exporter must replace the
+  // internal ID with a logical name/type reference and the importer must map it
+  // back only to a credential owned by the destination account.
+  flow.nodes.find((n) => n.id === 'msg-welcome').data.credentialId = cred.json.credential.id;
   const saved = await api('PUT', `/api/bots/${botId}/flow`, { flow }, token);
   check('save draft flow', saved.status === 200);
 
@@ -138,7 +142,9 @@ console.log('\n■ REST API');
   check('flow export is portable and secret-free', exported.status === 200
     && exported.json.kind === 'telebot-builder/flow-export'
     && exported.json.schemaVersion === 1
-    && !JSON.stringify(exported.json).includes('TEST-TOKEN'));
+    && exported.json.requirements.credentials.length === 1
+    && !JSON.stringify(exported.json).includes('TEST-TOKEN')
+    && !JSON.stringify(exported.json).includes(cred.json.credential.id));
   const imported = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json }, token);
   check('flow import restores a validated draft', imported.status === 200 && imported.json.flow.nodes.length === flow.nodes.length);
 

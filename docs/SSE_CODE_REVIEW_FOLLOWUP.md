@@ -1,7 +1,7 @@
 # Senior Software Engineer Follow-up Code Review
 
-**Date:** 2026-07-19  
-**Scope:** Review of the latest remediation increment, commit `0ec5b66` (`Gate experimental nodes and preserve failures`).  
+**Date:** 2026-07-19
+**Scope:** Review of the latest remediation increment, commit `0ec5b66` (`Gate experimental nodes and preserve failures`).
 **Result:** **Changes not approved as final.** The increment improves the safety posture, but introduces/retains correctness gaps that must be addressed before the reviewer gate can close.
 
 ## Positive observations

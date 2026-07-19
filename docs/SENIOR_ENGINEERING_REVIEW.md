@@ -1,7 +1,7 @@
 # Senior Software Engineer Code Review
 
-**Date:** 2026-07-19  
-**Scope:** Post-remediation branch through `47b62d1`, with focus on implementation correctness, maintainability, failure behavior, and the path from a single-process prototype to a dependable product.  
+**Date:** 2026-07-19
+**Scope:** Post-remediation branch through `47b62d1`, with focus on implementation correctness, maintainability, failure behavior, and the path from a single-process prototype to a dependable product.
 **Relationship to prior reviews:** This is an independent engineering review. It confirms that the latest callback/named-value fixes are directionally correct, but it does **not** certify the broader remediation program as complete.
 
 ## What was rechecked

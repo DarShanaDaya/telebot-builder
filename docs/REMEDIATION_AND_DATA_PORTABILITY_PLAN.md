@@ -1,6 +1,6 @@
 # Remediation, Backup/Restore, and Import/Export Plan
 
-**Date:** 2026-07-19  
+**Date:** 2026-07-19
 **Inputs reviewed:**
 
 - [`CODE_REVIEW.md`](CODE_REVIEW.md)

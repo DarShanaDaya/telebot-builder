@@ -1,7 +1,7 @@
 # Technical Code Review
 
-**Date:** 2026-07-19  
-**Scope:** Current working branch, including the named-node value/reference work (`baa73fd`, `8582fab`) and the runtime features it depends on.  
+**Date:** 2026-07-19
+**Scope:** Current working branch, including the named-node value/reference work (`baa73fd`, `8582fab`) and the runtime features it depends on.
 **Method:** Static review of the React builder, flow validation, runtime engine/actions, webhook/manager routes, and the current end-to-end self-test. Client build and server self-test were previously run successfully; passing checks do not cover the findings below.
 
 ## Executive summary

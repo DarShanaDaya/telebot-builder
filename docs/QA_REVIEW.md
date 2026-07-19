@@ -1,6 +1,6 @@
 # QA & Senior QA Review
 
-**Date:** 2026-07-19  
+**Date:** 2026-07-19
 **Review mode:** Two parallel review streams:
 
 - **QA review:** functional behavior, validation, regression scenarios, and user-visible flow-builder behavior.

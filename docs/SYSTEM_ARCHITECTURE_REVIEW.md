@@ -1,7 +1,7 @@
 # System Architecture & Code Review
 
-**Date:** 2026-07-19  
-**Scope:** End-to-end system architecture: browser builder, Express API, Telegram ingress, runtime execution, persistence, deployment modes, and cross-cutting security/reliability.  
+**Date:** 2026-07-19
+**Scope:** End-to-end system architecture: browser builder, Express API, Telegram ingress, runtime execution, persistence, deployment modes, and cross-cutting security/reliability.
 **Related document:** [`CODE_REVIEW.md`](CODE_REVIEW.md) covers implementation-level and feature-contract findings.
 
 ## Current architecture

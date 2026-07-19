@@ -149,8 +149,12 @@ console.log('\n■ REST API');
   missingCredentialArchive.requirements.credentials[0].name = 'Missing credential';
   const missingCredentialImport = await api('POST', `/api/bots/${botId}/flow/import`, { archive: missingCredentialArchive }, token);
   check('flow import rejects missing credential mappings', missingCredentialImport.status === 422);
-  const imported = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json }, token);
-  check('flow import restores a validated draft', imported.status === 200 && imported.json.flow.nodes.length === flow.nodes.length);
+  const duplicateCredential = await api('POST', '/api/credentials', { name: 'OpenAI', type: 'openai', data: { apiKey: 'sk-test-duplicate-1234567890' } }, token);
+  const credentialRef = exported.json.requirements.credentials[0].ref;
+  const ambiguousImport = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json }, token);
+  check('flow import rejects ambiguous credential mappings', ambiguousImport.status === 422);
+  const imported = await api('POST', `/api/bots/${botId}/flow/import`, { archive: exported.json, credentialMap: { [credentialRef]: cred.json.credential.id } }, token);
+  check('flow import restores a validated draft', duplicateCredential.status === 201 && imported.status === 200 && imported.json.flow.nodes.length === flow.nodes.length);
 
   const val = await api('POST', `/api/bots/${botId}/flow/validate`, { flow }, token);
   check('flow validates clean', val.status === 200 && val.json.errors.length === 0, JSON.stringify(val.json.errors));

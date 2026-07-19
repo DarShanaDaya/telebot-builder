@@ -79,7 +79,7 @@ function makeFlowExport(flow, credentials) {
   return { kind: FLOW_EXPORT_KIND, schemaVersion: FLOW_EXPORT_VERSION, exportedAt: new Date().toISOString(), flow: exportedFlow, requirements: { credentials: requirements } };
 }
 
-async function hydrateImportedFlow(archive, userId) {
+async function hydrateImportedFlow(archive, userId, credentialMap = {}) {
   if (!archive || archive.kind !== FLOW_EXPORT_KIND || archive.schemaVersion !== FLOW_EXPORT_VERSION || !archive.flow) {
     throw badRequest('Unsupported flow export. Expected a Telebot Builder flow export version 1.');
   }
@@ -94,8 +94,15 @@ async function hydrateImportedFlow(archive, userId) {
     const data = node.data || {};
     if (!data.credentialRef) continue;
     const required = requirements.get(data.credentialRef);
-    const match = credentials.find((credential) => credential.name === required?.name && credential.type === required?.type);
-    if (!match) throw unprocessable(`Import requires credential "${required?.name || data.credentialRef}" (${required?.type || 'unknown type'}). Create it before importing.`);
+    const explicitlyMappedId = typeof credentialMap?.[data.credentialRef] === 'string' ? credentialMap[data.credentialRef] : null;
+    const candidates = credentials.filter((credential) => credential.name === required?.name && credential.type === required?.type);
+    const match = explicitlyMappedId
+      ? credentials.find((credential) => credential.id === explicitlyMappedId && credential.type === required?.type)
+      : candidates.length === 1 ? candidates[0] : null;
+    if (!match) {
+      const reason = candidates.length > 1 ? 'Multiple matching credentials exist; provide an explicit credential mapping.' : 'Create it before importing.';
+      throw unprocessable(`Import requires credential "${required?.name || data.credentialRef}" (${required?.type || 'unknown type'}). ${reason}`);
+    }
     data.credentialId = match.id;
     delete data.credentialRef;
   }
@@ -240,7 +247,7 @@ export function botsRouter() {
   // until the owner explicitly validates and publishes the imported draft.
   r.post('/:id/flow/import', ah(async (req, res) => {
     const bot = await ownedBot(req, req.params.id);
-    const flow = await hydrateImportedFlow(req.body?.archive, req.user.id);
+    const flow = await hydrateImportedFlow(req.body?.archive, req.user.id, req.body?.credentialMap);
     if (flow.nodes.length > config.maxFlowNodes) throw badRequest(`Imported flow has too many nodes (max ${config.maxFlowNodes}).`);
     const { errors, warnings } = validateFlow(flow);
     if (errors.length) throw unprocessable('Imported flow has problems that must be fixed before saving.', { errors, warnings });

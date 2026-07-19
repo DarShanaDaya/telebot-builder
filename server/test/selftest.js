@@ -259,11 +259,15 @@ console.log('\n■ flow engine (mock transport)');
   const currentPlan = JSON.parse(session.variables)._nodeValues?.plan || {};
   check('revisiting buttons replaces stale named choice values', currentPlan.collect === 'collect_number' && currentPlan.selected === 'collect' && !('goodbye' in currentPlan));
 
-  // Logs were written.
+  // Logs were written and redact credential-shaped fields before persistence.
+  log('info', 'redaction probe', 557, { apiKey: 'secret-key', nested: { token: 'secret-token', ok: true } });
+  await Promise.resolve();
   const logs = await db.listLogs(botRow.id, { limit: 500 });
   check('engine wrote bot logs', logs.length > 5);
   check('logs contain button press + condition evaluation',
     logs.some((l) => l.message.includes('Button')) && logs.some((l) => l.message.includes('Condition')));
+  const redactionLog = logs.find((l) => l.message === 'redaction probe');
+  check('logs redact nested credential-shaped fields', redactionLog && !redactionLog.data.includes('secret-key') && !redactionLog.data.includes('secret-token') && redactionLog.data.includes('[REDACTED]'));
 
   // Sessions API surface.
   const token2 = (await api('POST', '/api/auth/login', { email: 'ada@example.com', password: 'password123' })).json.token;

@@ -14,6 +14,17 @@ import { renderTemplate } from '../lib/template.js';
 
 const MAX_STEPS = config.maxFlowStepsPerUpdate;
 
+const SENSITIVE_LOG_KEY = /token|secret|password|authorization|api[-_]?key|credential/i;
+
+function redactLogData(value, key = '') {
+  if (SENSITIVE_LOG_KEY.test(key)) return '[REDACTED]';
+  if (Array.isArray(value)) return value.map((item) => redactLogData(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, redactLogData(childValue, childKey)]));
+  }
+  return value;
+}
+
 export function makeBotLogger(botId) {
   return (level, message, chatId = null, dataObj = null) => {
     const line = `[bot ${botId.slice(0, 8)}] ${message}`;
@@ -24,7 +35,7 @@ export function makeBotLogger(botId) {
       chat_id: chatId == null ? null : String(chatId),
       level,
       message: String(message),
-      data: dataObj ? JSON.stringify(dataObj).slice(0, 4000) : null,
+      data: dataObj ? JSON.stringify(redactLogData(dataObj)).slice(0, 4000) : null,
       created_at: new Date().toISOString(),
     }).catch((err) => console.error('[log] write failed:', err.message));
   };

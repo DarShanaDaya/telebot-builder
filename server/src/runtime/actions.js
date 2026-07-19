@@ -494,7 +494,7 @@ async function execLog(ctx, node) {
   }
   
   // Include all variables if requested
-  if (d.includeVars !== false) {
+  if (d.includeVars === true) {
     logData._vars = { ...ctx.vars };
   }
   

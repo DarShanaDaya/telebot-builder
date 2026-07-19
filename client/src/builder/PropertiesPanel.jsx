@@ -522,7 +522,7 @@ export default function PropertiesPanel({ node, credentials, previousNodeValues 
               <textarea rows={4} value={JSON.stringify(d.data || {}, null, 2)} onChange={(e) => { try { set(d, onChange, 'data', JSON.parse(e.target.value)); } catch {} }} placeholder='{ "orderId": "{{order_id}}", "amount": "{{total}}" }' style={{ fontFamily: 'monospace', fontSize: '0.85rem' }} />
             </Field>
             <label className="check-row">
-              <input type="checkbox" checked={d.includeVars !== false} onChange={(e) => set(d, onChange, 'includeVars', e.target.checked)} />
+              <input type="checkbox" checked={d.includeVars === true} onChange={(e) => set(d, onChange, 'includeVars', e.target.checked)} />
               Include all flow variables in log
             </label>
           </>

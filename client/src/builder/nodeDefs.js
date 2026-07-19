@@ -299,7 +299,7 @@ export function defaultData(type) {
         level: 'info', // debug, info, warn, error
         message: 'Flow reached checkpoint',
         data: {}, // key-value pairs to log
-        includeVars: true,
+        includeVars: false,
       };
 
     default:

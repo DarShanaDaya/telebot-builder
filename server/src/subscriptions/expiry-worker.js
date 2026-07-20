@@ -1,6 +1,9 @@
+import crypto from 'node:crypto';
+import os from 'node:os';
 import { db } from '../db/index.js';
 
 const INTERVAL_MS = 30_000;
+const WORKER_ID = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`;
 let timer = null;
 
 const reminderText = {
@@ -70,15 +73,15 @@ async function runJob(job, client) {
   await client.sendMessage(entitlement.telegram_user_id, 'Your subscription has expired and your access was removed.');
 }
 
-export async function processSubscriptionJobs(client) {
-  const jobs = await db.claimDueSubscriptionJobs(new Date().toISOString());
+export async function processSubscriptionJobs(client, workerId = WORKER_ID) {
+  const jobs = await db.claimDueSubscriptionJobs(new Date().toISOString(), 25, workerId);
   for (const job of jobs) {
     try {
       const completed = await runJob(job, client);
-      if (completed !== false) await db.completeSubscriptionJob(job.id);
+      if (completed !== false) await db.completeSubscriptionJob(job.id, workerId);
     } catch (error) {
       const retryAt = new Date(Date.now() + Math.min(15 * 60 * 1000, 30_000 * (2 ** Math.min(job.attempts, 5)))).toISOString();
-      await db.failSubscriptionJob(job.id, error.message, retryAt);
+      await db.failSubscriptionJob(job.id, error.message, retryAt, workerId);
       console.error(`[subscription-worker] ${job.job_type}/${job.entity_id}: ${error.message}`);
     }
   }

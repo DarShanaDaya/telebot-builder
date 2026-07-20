@@ -162,18 +162,15 @@ export function createSupabaseRepo({ url, serviceKey }) {
     async updateSubscriptionInviteLink(id, patch) { await unwrap(sb.from('subscription_invite_links').update(patch).eq('id', id), 'updateSubscriptionInviteLink'); return one(await unwrap(sb.from('subscription_invite_links').select('*').eq('id', id).limit(1), 'getSubscriptionInviteLink')); },
     async listSubscriptionInviteLinks(entitlementId) { return unwrap(sb.from('subscription_invite_links').select('*').eq('entitlement_id', entitlementId).order('created_at', { ascending: false }), 'listSubscriptionInviteLinks'); },
     async upsertSubscriptionJob(row) { await unwrap(sb.from('subscription_jobs').upsert(row, { onConflict: 'job_type,entity_id' }), 'upsertSubscriptionJob'); return one(await unwrap(sb.from('subscription_jobs').select('*').eq('job_type', row.job_type).eq('entity_id', row.entity_id).limit(1), 'getSubscriptionJob')); },
-    async claimDueSubscriptionJobs(now, limit = 25) {
-      const rows = await unwrap(sb.from('subscription_jobs').select('*').eq('status', 'pending').lte('run_at', now).order('run_at', { ascending: true }).limit(limit), 'listDueSubscriptionJobs');
-      const claimed = [];
-      for (const row of rows) {
-        const claimedAt = new Date().toISOString();
-        const updated = await unwrap(sb.from('subscription_jobs').update({ status: 'running', attempts: (row.attempts || 0) + 1, claimed_at: claimedAt }).eq('id', row.id).eq('status', 'pending').select(), 'claimSubscriptionJob');
-        if (updated.length) claimed.push(updated[0]);
-      }
-      return claimed;
+    async claimDueSubscriptionJobs(_now, limit = 25, workerId = 'supabase-worker', leaseSeconds = 120) {
+      return unwrap(sb.rpc('claim_subscription_jobs', { p_worker_id: workerId, p_limit: limit, p_lease_seconds: leaseSeconds }), 'claimDueSubscriptionJobs');
     },
-    async completeSubscriptionJob(id) { await unwrap(sb.from('subscription_jobs').update({ status: 'completed', claimed_at: null }).eq('id', id), 'completeSubscriptionJob'); },
-    async failSubscriptionJob(id, error, retryAt) { await unwrap(sb.from('subscription_jobs').update({ status: 'pending', claimed_at: null, last_error: String(error).slice(0, 1000), run_at: retryAt }).eq('id', id), 'failSubscriptionJob'); },
+    async completeSubscriptionJob(id, workerId = 'supabase-worker') {
+      await unwrap(sb.from('subscription_jobs').update({ status: 'completed', claimed_at: null, claimed_by: null, lease_until: null }).eq('id', id).eq('claimed_by', workerId), 'completeSubscriptionJob');
+    },
+    async failSubscriptionJob(id, error, retryAt, workerId = 'supabase-worker') {
+      await unwrap(sb.from('subscription_jobs').update({ status: 'pending', claimed_at: null, claimed_by: null, lease_until: null, last_error: String(error).slice(0, 1000), run_at: retryAt }).eq('id', id).eq('claimed_by', workerId), 'failSubscriptionJob');
+    },
     async addSubscriptionAuditLog(row) { await unwrap(sb.from('subscription_audit_logs').insert(row), 'addSubscriptionAuditLog'); },
     async getSubscriptionEntitlementForUser(id, userId) {
       return one(await unwrap(sb.from('subscription_entitlements').select('*, subscription_orders!inner(user_id)').eq('id', id).eq('subscription_orders.user_id', userId).limit(1), 'getSubscriptionEntitlementForUser'));

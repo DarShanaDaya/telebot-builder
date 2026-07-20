@@ -196,6 +196,8 @@ create table if not exists public.subscription_jobs (
   status text not null default 'pending',
   attempts integer not null default 0,
   claimed_at timestamptz,
+  claimed_by text,
+  lease_until timestamptz,
   last_error text,
   created_at timestamptz not null default now(),
   unique(job_type, entity_id)
@@ -253,3 +255,38 @@ alter table public.subscription_orders add column if not exists payment_currency
 
 -- Crypto providers may return decimal asset amounts.
 alter table public.subscription_payments alter column amount type numeric using amount::numeric;
+
+
+-- Distributed worker claim: requires Postgres/Supabase for multi-node mode.
+alter table public.subscription_jobs add column if not exists claimed_by text;
+alter table public.subscription_jobs add column if not exists lease_until timestamptz;
+
+create or replace function public.claim_subscription_jobs(
+  p_worker_id text,
+  p_limit integer default 25,
+  p_lease_seconds integer default 120
+)
+returns setof public.subscription_jobs
+language sql
+security definer
+set search_path = public
+as $$
+  with candidates as (
+    select id
+    from public.subscription_jobs
+    where (status = 'pending' and run_at <= now())
+       or (status = 'running' and lease_until is not null and lease_until <= now())
+    order by run_at asc
+    for update skip locked
+    limit greatest(1, least(p_limit, 500))
+  )
+  update public.subscription_jobs j
+     set status = 'running',
+         attempts = j.attempts + 1,
+         claimed_at = now(),
+         claimed_by = p_worker_id,
+         lease_until = now() + make_interval(secs => greatest(30, least(p_lease_seconds, 3600)))
+    from candidates c
+   where j.id = c.id
+  returning j.*;
+$$;

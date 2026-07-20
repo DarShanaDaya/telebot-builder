@@ -94,7 +94,7 @@ NOWPayments orders are fulfilled only after a signed IPN reports `finished`, or 
 
 The subscription worker runs with the system bot on persistent deployments. It schedules reminders at 7 days, 3 days, and 24 hours before expiry, then removes expired members and revokes outstanding invites.
 
-For multi-instance deployments, use Supabase/Postgres or add a queue with distributed locking. SQLite is appropriate for a single persistent worker only.
+For multi-instance deployments, use Supabase/Postgres. The Supabase schema installs `claim_subscription_jobs`, which uses `FOR UPDATE SKIP LOCKED` and lease expiry so multiple worker nodes can safely claim jobs. Each worker has a unique host/process lease identity. Apply the full schema migration before enabling multiple replicas. SQLite is appropriate for a single persistent worker only.
 
 ## Current limitations
 

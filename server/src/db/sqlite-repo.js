@@ -171,6 +171,8 @@ CREATE TABLE IF NOT EXISTS subscription_jobs (
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
   claimed_at TEXT,
+  claimed_by TEXT,
+  lease_until TEXT,
   last_error TEXT,
   created_at TEXT NOT NULL,
   UNIQUE(job_type, entity_id)
@@ -237,6 +239,8 @@ export function createSqliteRepo() {
     'ALTER TABLE subscription_plans ADD COLUMN crypto_currency TEXT',
     'ALTER TABLE subscription_orders ADD COLUMN payment_amount_snapshot REAL',
     'ALTER TABLE subscription_orders ADD COLUMN payment_currency_snapshot TEXT',
+    'ALTER TABLE subscription_jobs ADD COLUMN claimed_by TEXT',
+    'ALTER TABLE subscription_jobs ADD COLUMN lease_until TEXT',
   ]) {
     try { db.exec(statement); } catch (error) {
       if (!/duplicate column name/i.test(error.message || '')) throw error;
@@ -561,17 +565,22 @@ export function createSqliteRepo() {
       );
       return db.prepare('SELECT * FROM subscription_jobs WHERE job_type = ? AND entity_id = ?').get(row.job_type, row.entity_id) || null;
     },
-    async claimDueSubscriptionJobs(now, limit = 25) {
+    async claimDueSubscriptionJobs(now, limit = 25, workerId = 'sqlite-worker', leaseSeconds = 120) {
       const claimedAt = new Date().toISOString();
-      db.prepare(`UPDATE subscription_jobs SET status = 'running', attempts = attempts + 1, claimed_at = ?
-        WHERE id IN (SELECT id FROM subscription_jobs WHERE status = 'pending' AND run_at <= ? ORDER BY run_at LIMIT ?)`).run(claimedAt, now, limit);
-      return db.prepare("SELECT * FROM subscription_jobs WHERE status = 'running' AND claimed_at = ? ORDER BY run_at").all(claimedAt);
+      const leaseUntil = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+      db.prepare(`UPDATE subscription_jobs SET status = 'running', attempts = attempts + 1,
+        claimed_at = ?, claimed_by = ?, lease_until = ?
+        WHERE id IN (SELECT id FROM subscription_jobs
+          WHERE (status = 'pending' AND run_at <= ?)
+             OR (status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?)
+          ORDER BY run_at LIMIT ?)`).run(claimedAt, workerId, leaseUntil, now, now, limit);
+      return db.prepare("SELECT * FROM subscription_jobs WHERE status = 'running' AND claimed_by = ? AND claimed_at = ? ORDER BY run_at").all(workerId, claimedAt);
     },
-    async completeSubscriptionJob(id) {
-      db.prepare("UPDATE subscription_jobs SET status = 'completed', claimed_at = NULL WHERE id = ?").run(id);
+    async completeSubscriptionJob(id, workerId = 'sqlite-worker') {
+      db.prepare("UPDATE subscription_jobs SET status = 'completed', claimed_at = NULL, claimed_by = NULL, lease_until = NULL WHERE id = ? AND claimed_by = ?").run(id, workerId);
     },
-    async failSubscriptionJob(id, error, retryAt) {
-      db.prepare("UPDATE subscription_jobs SET status = 'pending', claimed_at = NULL, last_error = ?, run_at = ? WHERE id = ?").run(String(error).slice(0, 1000), retryAt, id);
+    async failSubscriptionJob(id, error, retryAt, workerId = 'sqlite-worker') {
+      db.prepare("UPDATE subscription_jobs SET status = 'pending', claimed_at = NULL, claimed_by = NULL, lease_until = NULL, last_error = ?, run_at = ? WHERE id = ? AND claimed_by = ?").run(String(error).slice(0, 1000), retryAt, id, workerId);
     },
     async addSubscriptionAuditLog(row) {
       db.prepare(`INSERT INTO subscription_audit_logs

@@ -202,6 +202,10 @@ CRUD /api/credentials[/:id]          GET /api/credentials/types
 POST /webhooks/telegram/:botId/:secret   (public, Telegram only)
 ```
 
+## 💳 Subscription management
+
+The paid-access subscription module is documented in [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md). It supports Telegram Stars plans, NOWPayments crypto checkout, one-use invite links, membership activation, reminders, expiry removal, refunds, and creator-side subscriber management. Creator payouts are intentionally not included in the MVP.
+
 ## 🧭 Roadmap ideas
 
 - Broadcast messages to stored sessions

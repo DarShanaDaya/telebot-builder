@@ -69,6 +69,11 @@ export const config = {
   isVercel: Boolean(process.env.VERCEL),
   port: Number(process.env.PORT || 4000),
   publicBaseUrl,
+  subscriptionBotToken: process.env.SUBSCRIPTION_BOT_TOKEN || '',
+  subscriptionBotUsername: process.env.SUBSCRIPTION_BOT_USERNAME || '',
+  nowPaymentsApiKey: process.env.NOWPAYMENTS_API_KEY || '',
+  nowPaymentsIpnSecret: process.env.NOWPAYMENTS_IPN_SECRET || '',
+  nowPaymentsIpnUrl: process.env.NOWPAYMENTS_IPN_URL || '',
   // Production API access is same-origin unless explicit frontend origins are
   // configured. Development remains permissive for the Vite dev server.
   corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),

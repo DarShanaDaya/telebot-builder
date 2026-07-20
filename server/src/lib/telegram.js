@@ -36,8 +36,44 @@ export class TelegramClient {
     return this.call('getMe');
   }
 
-  getUpdates(offset, timeoutSec = 30) {
-    return this.call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message', 'callback_query'] });
+  getUpdates(offset, timeoutSec = 30, allowedUpdates = ['message', 'callback_query']) {
+    return this.call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: allowedUpdates });
+  }
+
+  getChat(chatId) {
+    return this.call('getChat', { chat_id: chatId });
+  }
+
+  getChatMember(chatId, userId) {
+    return this.call('getChatMember', { chat_id: chatId, user_id: userId });
+  }
+
+  getChatAdministrators(chatId) {
+    return this.call('getChatAdministrators', { chat_id: chatId });
+  }
+
+  createChatInviteLink(chatId, extra = {}) {
+    return this.call('createChatInviteLink', { chat_id: chatId, ...extra });
+  }
+
+  revokeChatInviteLink(chatId, inviteLink) {
+    return this.call('revokeChatInviteLink', { chat_id: chatId, invite_link: inviteLink });
+  }
+
+  banChatMember(chatId, userId, extra = {}) {
+    return this.call('banChatMember', { chat_id: chatId, user_id: userId, ...extra });
+  }
+
+  unbanChatMember(chatId, userId, onlyIfBanned = true) {
+    return this.call('unbanChatMember', { chat_id: chatId, user_id: userId, only_if_banned: onlyIfBanned });
+  }
+
+  approveChatJoinRequest(chatId, userId) {
+    return this.call('approveChatJoinRequest', { chat_id: chatId, user_id: userId });
+  }
+
+  declineChatJoinRequest(chatId, userId) {
+    return this.call('declineChatJoinRequest', { chat_id: chatId, user_id: userId });
   }
 
   // Sends a message; transparently retries without parse_mode when Telegram
@@ -75,8 +111,27 @@ export class TelegramClient {
     return this.call('answerCallbackQuery', { callback_query_id: id, text }).catch(() => {});
   }
 
-  setWebhook(url) {
-    return this.call('setWebhook', { url, allowed_updates: ['message', 'callback_query'], drop_pending_updates: true });
+  sendInvoice(chatId, invoice) {
+    return this.call('sendInvoice', { chat_id: chatId, ...invoice });
+  }
+
+  answerPreCheckoutQuery(queryId, ok, errorMessage) {
+    return this.call('answerPreCheckoutQuery', {
+      pre_checkout_query_id: queryId,
+      ok,
+      ...(ok ? {} : { error_message: errorMessage || 'Payment could not be verified.' }),
+    });
+  }
+
+  refundStarPayment(userId, telegramPaymentChargeId) {
+    return this.call('refundStarPayment', {
+      user_id: userId,
+      telegram_payment_charge_id: telegramPaymentChargeId,
+    });
+  }
+
+  setWebhook(url, allowedUpdates = ['message', 'callback_query']) {
+    return this.call('setWebhook', { url, allowed_updates: allowedUpdates, drop_pending_updates: true });
   }
 
   deleteWebhook() {
@@ -87,10 +142,11 @@ export class TelegramClient {
 // Long-polling loop with backoff. Stops itself when the token is revoked (401)
 // or when `stop()` is called.
 export class Poller {
-  constructor(client, onUpdate, log = () => {}) {
+  constructor(client, onUpdate, log = () => {}, allowedUpdates = ['message', 'callback_query']) {
     this.client = client;
     this.onUpdate = onUpdate;
     this.log = log;
+    this.allowedUpdates = allowedUpdates;
     this.running = false;
     this.offset = 0;
   }
@@ -100,7 +156,7 @@ export class Poller {
     try {
       await this.client.deleteWebhook();
       // Skip backlog so redeploying a bot doesn't replay old conversations.
-      const backlog = await this.client.getUpdates(undefined, 0);
+      const backlog = await this.client.getUpdates(undefined, 0, this.allowedUpdates);
       if (backlog.length) this.offset = backlog[backlog.length - 1].update_id + 1;
     } catch (err) {
       this.log('warn', `Could not reset update stream: ${err.message}`);
@@ -116,7 +172,7 @@ export class Poller {
   async #loop() {
     while (this.running) {
       try {
-        const updates = await this.client.getUpdates(this.offset, 30);
+        const updates = await this.client.getUpdates(this.offset, 30, this.allowedUpdates);
         for (const update of updates) {
           this.offset = update.update_id + 1;
           Promise.resolve()

@@ -12,6 +12,7 @@ export const forbidden = (msg = 'Access denied') => new HttpError(403, msg);
 export const notFound = (msg = 'Not found') => new HttpError(404, msg);
 export const conflict = (msg) => new HttpError(409, msg);
 export const unprocessable = (msg, details) => new HttpError(422, msg, details);
+export const serviceUnavailable = (msg = 'Service unavailable') => new HttpError(503, msg);
 
 // Wrap async route handlers so rejections hit the central error middleware.
 export const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

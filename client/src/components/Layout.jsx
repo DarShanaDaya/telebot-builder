@@ -22,6 +22,9 @@ export default function Layout() {
           <NavLink to="/credentials" className={({ isActive }) => `side-link ${isActive ? 'active' : ''}`}>
             <span>🔑</span> Credentials
           </NavLink>
+          <NavLink to="/subscriptions" className={({ isActive }) => `side-link ${isActive ? 'active' : ''}`}>
+            <span>💳</span> Subscriptions
+          </NavLink>
         </nav>
         <div className="side-footer">
           <div className="user-chip">

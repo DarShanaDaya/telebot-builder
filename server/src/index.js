@@ -9,8 +9,11 @@ import { db } from './db/index.js';
 import { authRouter } from './auth/routes.js';
 import { botsRouter } from './bots/routes.js';
 import { credentialsRouter } from './credentials/routes.js';
+import { subscriptionsRouter } from './subscriptions/routes.js';
+import { nowPaymentsWebhookRouter } from './subscriptions/nowpayments-webhook.js';
 import { webhooksRouter } from './routes/webhooks.js';
 import { initManager, shutdownManager } from './hub/manager.js';
+import { initSubscriptionBot, shutdownSubscriptionBot } from './subscriptions/system-bot.js';
 import { HttpError } from './lib/http.js';
 
 export function buildApp() {
@@ -40,7 +43,9 @@ export function buildApp() {
   app.use('/api/auth', authRouter());
   app.use('/api/bots', botsRouter());
   app.use('/api/credentials', credentialsRouter());
+  app.use('/api/subscriptions', subscriptionsRouter());
   app.use('/webhooks', webhooksRouter());
+  app.use('/webhooks', nowPaymentsWebhookRouter());
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));
 
@@ -76,6 +81,11 @@ if (isMain) {
     console.log(`[server] ${fs.existsSync(config.clientDist) ? 'Serving built client.' : 'Client not built — run "npm run dev:client" or "npm run build".'}`);
     if (config.useSupabase) console.log('[server] Supabase persistence enabled.');
     await initManager();
+    try {
+      await initSubscriptionBot();
+    } catch (error) {
+      console.error('[subscription-bot] failed to start:', error.message);
+    }
     if (config.publicBaseUrl) {
       console.log(`[server] Webhook base URL: ${config.publicBaseUrl}`);
     } else {
@@ -86,6 +96,7 @@ if (isMain) {
   const shutdown = () => {
     console.log('\n[server] shutting down…');
     shutdownManager();
+    shutdownSubscriptionBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1500).unref();
   };

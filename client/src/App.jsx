@@ -7,6 +7,7 @@ import Builder from './pages/Builder';
 import Credentials from './pages/Credentials';
 import Sessions from './pages/Sessions';
 import Logs from './pages/Logs';
+import Subscriptions from './pages/Subscriptions';
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/credentials" element={<Credentials />} />
+        <Route path="/subscriptions" element={<Subscriptions />} />
         <Route path="/bots/:botId/sessions" element={<Sessions />} />
         <Route path="/bots/:botId/logs" element={<Logs />} />
       </Route>

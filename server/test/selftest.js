@@ -27,6 +27,11 @@ const { db } = await import('../src/db/index.js');
 const { buildApp } = await import('../src/index.js');
 const { handleUpdate, makeBotLogger } = await import('../src/runtime/engine.js');
 const { isPrivateIp } = await import('../src/runtime/actions.js');
+const { TelegramClient } = await import('../src/lib/telegram.js');
+const { verifyManagedChat, assertBotPermissions } = await import('../src/subscriptions/telegram-chat.js');
+const { handleSubscriptionBotUpdate } = await import('../src/subscriptions/system-bot.js');
+const { processSubscriptionJobs } = await import('../src/subscriptions/expiry-worker.js');
+const { verifyNowPaymentsSignature } = await import('../src/subscriptions/nowpayments.js');
 
 // ---- unit: crypto + templating ---------------------------------------------
 console.log('\n■ crypto & templating');
@@ -48,6 +53,41 @@ console.log('\n■ crypto & templating');
   check('HTTP egress identifies private and reserved targets',
     isPrivateIp('127.0.0.1') && isPrivateIp('10.0.0.1') && isPrivateIp('169.254.169.254')
     && isPrivateIp('192.168.1.1') && isPrivateIp('::1') && !isPrivateIp('8.8.8.8'));
+  const nowPaymentPayload = { payment_id: 42, payment_status: 'finished', nested: { z: 2, a: 1 } };
+  const crypto = await import('node:crypto');
+  const signature = crypto.createHmac('sha512', 'ipn-secret').update(JSON.stringify({ nested: { a: 1, z: 2 }, payment_id: 42, payment_status: 'finished' })).digest('hex');
+  check('NOWPayments IPN signature verification', verifyNowPaymentsSignature(nowPaymentPayload, signature, 'ipn-secret') && !verifyNowPaymentsSignature(nowPaymentPayload, 'bad', 'ipn-secret'));
+}
+
+// ---- Telegram subscription chat verification -------------------------------
+console.log('\n■ subscription Telegram permissions');
+{
+  const calls = [];
+  const telegram = new TelegramClient('test-token');
+  telegram.call = async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'getChat') return { id: '-1001', type: 'supergroup', title: 'Premium' };
+    if (method === 'getMe') return { id: 9001, username: 'system_bot' };
+    if (method === 'getChatMember' && String(params.user_id) === '777') {
+      return { user: { id: 777 }, status: 'creator' };
+    }
+    if (method === 'getChatMember' && String(params.user_id) === '9001') {
+      return { user: { id: 9001 }, status: 'administrator', can_invite_users: true, can_restrict_members: true };
+    }
+    throw new Error(`Unexpected Telegram method ${method}`);
+  };
+  const verified = await verifyManagedChat(telegram, { chatId: '-1001', telegramUserId: '777' });
+  check('managed chat verification checks creator and bot permissions',
+    verified.chat.id === '-1001' && verified.permissions.can_invite_users && verified.permissions.can_restrict_members);
+  check('Telegram chat verification calls the expected Bot API methods',
+    calls.map((call) => call.method).join(',') === 'getChat,getChatMember,getMe,getChatMember');
+  let rejected = false;
+  try {
+    assertBotPermissions({ status: 'administrator', can_invite_users: true, can_restrict_members: false });
+  } catch {
+    rejected = true;
+  }
+  check('permission verifier rejects a bot without removal rights', rejected);
 }
 
 // ---- API + engine -----------------------------------------------------------
@@ -82,6 +122,21 @@ console.log('\n■ REST API');
   const reg = await api('POST', '/api/auth/register', { email: 'ada@example.com', password: 'password123', name: 'Ada' });
   check('register', reg.status === 201 && reg.json.token);
   const token = reg.json.token;
+
+  const connectionResponse = await api('POST', '/api/subscriptions/connections', {}, token);
+  check('subscription connection code is created', connectionResponse.status === 201
+    && connectionResponse.json.code.length >= 16 && connectionResponse.json.expires_at);
+  const connectionMessage = [];
+  const connectionClient = { sendMessage: async (chatId, text) => connectionMessage.push({ chatId, text }) };
+  const connectionUpdate = {
+    update_id: 900,
+    message: { chat: { id: 777, type: 'private' }, from: { id: 777 }, text: `/connect ${connectionResponse.json.code}` },
+  };
+  check('system bot consumes connection code and confirms linking',
+    await handleSubscriptionBotUpdate(connectionUpdate, connectionClient) === true
+    && connectionMessage[0]?.text.includes('Telegram account linked'));
+  const chatWithoutBot = await api('POST', '/api/subscriptions/chats', { telegram_chat_id: '-1001' }, token);
+  check('chat linking requires configured subscription bot', chatWithoutBot.status === 503);
 
   const badLogin = await api('POST', '/api/auth/login', { email: 'ada@example.com', password: 'wrong' });
   check('login rejects bad password', badLogin.status === 401);
@@ -189,7 +244,128 @@ console.log('\n■ REST API');
   botRow = await db.getBot(botId);
   check('processed update claim de-duplicates delivery IDs',
     await db.claimUpdate(botId, 'test-update-1') === true && await db.claimUpdate(botId, 'test-update-1') === false);
+
+  // Subscription repository vertical slice: rows are tenant-owned, plan terms
+  // are snapshotted onto orders, and payment/entitlement records are linked.
+  const owner = await db.findUserByEmail('ada@example.com');
+  const now = new Date().toISOString();
+  const subscriptionChat = await db.createSubscriptionChat({
+    id: 'sub-chat-1', user_id: owner.id, telegram_chat_id: '-100123', chat_type: 'supergroup',
+    title: 'Premium', username: null, permissions_json: JSON.stringify({ can_invite_users: true }),
+    created_at: now, updated_at: now,
+  });
+  const plan = await db.createSubscriptionPlan({
+    id: 'sub-plan-1', chat_id: subscriptionChat.id, name: '30 days', description: 'Access',
+    duration_value: 30, duration_unit: 'days', is_lifetime: false, price_stars: 500,
+    currency: 'XTR', created_at: now, updated_at: now,
+  });
+  const order = await db.createSubscriptionOrder({
+    id: 'sub-order-1', user_id: owner.id, plan_id: plan.id, chat_id: subscriptionChat.id,
+    telegram_user_id: '777', status: 'pending', invoice_payload: 'sub-order-1-payload',
+    plan_name_snapshot: plan.name, duration_value_snapshot: plan.duration_value,
+    duration_unit_snapshot: plan.duration_unit, is_lifetime_snapshot: false,
+    price_snapshot: plan.price_stars, currency_snapshot: plan.currency, created_at: now,
+  });
+  const payment = await db.createSubscriptionPayment({
+    id: 'sub-payment-1', order_id: order.id, provider: 'telegram_stars',
+    provider_payment_id: 'charge-1', provider_event_id: 'event-1', status: 'paid',
+    amount: 500, currency: 'XTR', charge_id: 'charge-1', raw_event_json: '{}',
+    created_at: now, updated_at: now,
+  });
+  const entitlement = await db.createSubscriptionEntitlement({
+    id: 'sub-entitlement-1', order_id: order.id, chat_id: subscriptionChat.id,
+    telegram_user_id: '777', status: 'active', starts_at: now, expires_at: new Date(Date.now() + 86400000).toISOString(),
+    created_at: now, updated_at: now,
+  });
+  check('subscription repository creates linked chat, plan, order, payment and entitlement',
+    subscriptionChat.id === 'sub-chat-1' && plan.price_stars === 500
+    && order.price_snapshot === 500 && payment.provider_payment_id === 'charge-1'
+    && entitlement.order_id === order.id);
+  check('subscription order payload lookup works',
+    (await db.getSubscriptionOrderByPayload('sub-order-1-payload')).id === order.id);
+  check('subscription payment lookup works',
+    (await db.findSubscriptionPayment('telegram_stars', 'charge-1')).id === payment.id);
+  check('subscription tenant listing is scoped',
+    (await db.listSubscriptionChats('missing-user')).length === 0);
+  check('subscription ownership lookups reject another tenant',
+    await db.getSubscriptionChatForUser(subscriptionChat.id, 'missing-user') === null
+    && await db.getSubscriptionPlanForUser(plan.id, 'missing-user') === null
+    && await db.getSubscriptionOrderForUser(order.id, 'missing-user') === null
+    && await db.getSubscriptionEntitlementForUser(entitlement.id, 'missing-user') === null);
+
+  const planApi = await api('POST', `/api/subscriptions/chats/${subscriptionChat.id}/plans`, {
+    name: 'Lifetime', description: 'Permanent access', is_lifetime: true, price_stars: 1000, price_fiat_amount: 25, price_fiat_currency: 'USD', crypto_currency: 'usdttrc20',
+  }, token);
+  check('plan API creates lifetime plan', planApi.status === 201
+    && planApi.json.plan.is_lifetime === true && planApi.json.plan.duration_value === null
+    && planApi.json.plan.price_fiat_amount === 25 && planApi.json.plan.crypto_currency === 'usdttrc20');
+  const invalidPlanApi = await api('POST', `/api/subscriptions/chats/${subscriptionChat.id}/plans`, {
+    name: 'Broken', price_stars: 100, duration_value: 30,
+  }, token);
+  check('plan API rejects missing duration unit', invalidPlanApi.status === 400);
+  const plansApi = await api('GET', `/api/subscriptions/chats/${subscriptionChat.id}/plans`, null, token);
+  check('plan API lists tenant plans', plansApi.status === 200 && plansApi.json.plans.length === 2);
+  const deactivated = await api('DELETE', `/api/subscriptions/plans/${planApi.json.plan.id}`, null, token);
+  check('plan deletion deactivates instead of deleting history', deactivated.status === 200 && deactivated.json.plan.active === false);
+  const entitlementApi = await api('GET', `/api/subscriptions/chats/${subscriptionChat.id}/entitlements`, null, token);
+  check('entitlement API lists tenant subscriptions', entitlementApi.status === 200 && entitlementApi.json.entitlements.length === 1);
+  const manualGrantUnavailable = await api('POST', `/api/subscriptions/chats/${subscriptionChat.id}/grant`, { plan_id: plan.id, telegram_user_id: '888' }, token);
+  check('manual grant requires configured subscription bot', manualGrantUnavailable.status === 503);
+  const paymentApi = await api('GET', '/api/subscriptions/payments', null, token);
+  check('payment API lists tenant payments', paymentApi.status === 200 && paymentApi.json.payments.length === 1);
+
+  const invoiceCalls = [];
+  const paymentClient = {
+    sendInvoice: async (chatId, invoice) => { invoiceCalls.push({ method: 'sendInvoice', chatId, invoice }); return {}; },
+    answerPreCheckoutQuery: async (...args) => { invoiceCalls.push({ method: 'pre_checkout', args }); },
+    createChatInviteLink: async (chatId, extra) => { invoiceCalls.push({ method: 'invite', chatId, extra }); return { invite_link: 'https://t.me/+one-time-test' }; },
+    banChatMember: async (chatId, userId) => { invoiceCalls.push({ method: 'ban', chatId, userId }); },
+    unbanChatMember: async (chatId, userId) => { invoiceCalls.push({ method: 'unban', chatId, userId }); },
+    revokeChatInviteLink: async (chatId, inviteLink) => { invoiceCalls.push({ method: 'revoke', chatId, inviteLink }); },
+    sendMessage: async (chatId, text) => { invoiceCalls.push({ method: 'message', chatId, text }); },
+  };
+  await handleSubscriptionBotUpdate({ message: { chat: { id: 777, type: 'private' }, from: { id: 777 }, text: '/buy sub-plan-1' } }, paymentClient);
+  const invoice = invoiceCalls.find((call) => call.method === 'sendInvoice')?.invoice;
+  check('Stars checkout creates a pending invoice', invoice?.currency === 'XTR' && invoice?.prices?.[0]?.amount === 500);
+  await handleSubscriptionBotUpdate({ pre_checkout_query: {
+    id: 'pre-1', from: { id: 777 }, invoice_payload: invoice.payload, currency: 'XTR', total_amount: 500,
+  } }, paymentClient);
+  check('Stars pre-checkout is answered', invoiceCalls.some((call) => call.method === 'pre_checkout' && call.args[1] === true));
+  const successful = { message: {
+    chat: { id: 777, type: 'private' }, from: { id: 777 },
+    successful_payment: { invoice_payload: invoice.payload, currency: 'XTR', total_amount: 500, telegram_payment_charge_id: 'stars-charge-1' },
+  } };
+  await handleSubscriptionBotUpdate(successful, paymentClient);
+  const paidOrder = await db.getSubscriptionOrderByPayload(invoice.payload);
+  const paidEntitlement = await db.getSubscriptionEntitlementByOrder(paidOrder.id);
+  check('successful Stars payment creates an entitlement and invite',
+    paidOrder.status === 'paid' && paidEntitlement.status === 'invite_issued'
+    && invoiceCalls.some((call) => call.method === 'invite'));
+  const issuedInvite = await db.getSubscriptionInviteLinkByUrl('https://t.me/+one-time-test');
+  await handleSubscriptionBotUpdate({ chat_member: {
+    chat: { id: '-100123' }, from: { id: 777 },
+    invite_link: { invite_link: issuedInvite.invite_link },
+    new_chat_member: { status: 'member', user: { id: 777 } },
+  } }, paymentClient);
+  const activeEntitlement = await db.getSubscriptionEntitlement(paidEntitlement.id);
+  check('membership update activates the entitlement and consumes invite',
+    activeEntitlement.status === 'active' && issuedInvite && (await db.getSubscriptionInviteLinkByUrl(issuedInvite.invite_link)).status === 'used');
+  await handleSubscriptionBotUpdate({ message: { chat: { id: 777, type: 'private' }, from: { id: 777 }, text: '/status' } }, paymentClient);
+  check('system bot status command reports active subscriptions', invoiceCalls.some((call) => call.method === 'message' && call.text.includes('Your subscriptions')));
+  await handleSubscriptionBotUpdate(successful, paymentClient);
+  check('duplicate successful payment does not issue a second invite', invoiceCalls.filter((call) => call.method === 'invite').length === 1);
+  const expiredAt = new Date(Date.now() - 60_000).toISOString();
+  await db.updateSubscriptionEntitlement(paidEntitlement.id, { status: 'active', expires_at: expiredAt, updated_at: expiredAt });
+  await db.upsertSubscriptionJob({ id: 'expire-job-1', job_type: 'expire', entity_id: paidEntitlement.id, run_at: expiredAt, created_at: expiredAt });
+  await processSubscriptionJobs(paymentClient);
+  const expiredEntitlement = await db.getSubscriptionEntitlement(paidEntitlement.id);
+  check('expiry worker removes expired member and marks entitlement expired',
+    expiredEntitlement.status === 'expired'
+    && invoiceCalls.some((call) => call.method === 'ban')
+    && invoiceCalls.some((call) => call.method === 'unban'));
 }
+
+
 
 // ---- engine walk-through with a mock Telegram client ------------------------
 console.log('\n■ flow engine (mock transport)');

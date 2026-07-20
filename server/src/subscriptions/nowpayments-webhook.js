@@ -14,6 +14,10 @@ export function nowPaymentsWebhookRouter() {
     try {
       const payment = await db.findSubscriptionPayment('nowpayments', paymentId);
       if (!payment) return res.sendStatus(200);
+      if (req.body.order_id && String(req.body.order_id) !== String((await db.getSubscriptionOrder(payment.order_id))?.id)) {
+        console.error(`[nowpayments] order mismatch for payment ${paymentId}`);
+        return res.sendStatus(400);
+      }
       const status = String(req.body.payment_status || 'unknown');
       const updated = await db.updateSubscriptionPayment(payment.id, {
         status,

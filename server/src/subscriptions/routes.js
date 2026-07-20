@@ -217,6 +217,9 @@ export function subscriptionsRouter() {
     if (!local) throw notFound('Payment not found.');
     if (local.provider !== 'nowpayments') throw badRequest('Only NOWPayments records can be refreshed.');
     const providerPayment = await getNowPaymentsPayment(local.provider_payment_id);
+    if (providerPayment.order_id && String(providerPayment.order_id) !== String(local.order_id)) {
+      throw badRequest('Provider payment does not match the local order.');
+    }
     const status = String(providerPayment.payment_status || 'unknown');
     const now = new Date().toISOString();
     const updated = await db.updateSubscriptionPayment(local.id, { status, raw_event_json: JSON.stringify(providerPayment), updated_at: now });

@@ -36,7 +36,7 @@ NOWPAYMENTS_IPN_SECRET=...
 NOWPAYMENTS_IPN_URL=https://your-host.example/webhooks/nowpayments
 ```
 
-Run the updated Supabase schema after adding the module. SQLite creates additive tables and columns during startup.
+Run the updated Supabase schema after adding the module. SQLite creates additive tables and columns during startup. The backend accepts `SUPABASE_SECRET_KEY` (preferred) or the legacy `SUPABASE_SERVICE_ROLE_KEY`; this key is server-only and must never be placed in client-side environment variables. The publishable key is not used for server-side repository access.
 
 ## Creator API
 

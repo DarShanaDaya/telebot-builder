@@ -83,7 +83,7 @@ export const config = {
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS || 24),
   supabase: {
     url: process.env.SUPABASE_URL || '',
-    serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    serviceKey: process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
   },
   get useSupabase() {
     return Boolean(this.supabase.url && this.supabase.serviceKey);

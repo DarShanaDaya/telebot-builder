@@ -37,7 +37,9 @@ const publicBot = (b) => ({
 
 async function ownedBot(req, id) {
   const bot = await db.getBot(id);
-  if (!bot || bot.user_id !== req.user.id) throw notFound('Bot not found');
+  if (!bot) throw notFound('Bot not found');
+  // Owners always have access; admins may view and manage any account's bots.
+  if (bot.user_id !== req.user.id && !req.user.is_admin) throw notFound('Bot not found');
   return bot;
 }
 

@@ -7,6 +7,7 @@ create table if not exists public.users (
   email text unique not null,
   name text,
   password_hash text not null,
+  is_admin boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -238,6 +239,25 @@ create table if not exists public.subscription_telegram_accounts (
 );
 create index if not exists idx_subscription_telegram_accounts_user on public.subscription_telegram_accounts(user_id);
 
+-- Platform-wide "main" subscription, configured by an admin from the Admin
+-- console. A single row (id = 'main') holds the current offer.
+create table if not exists public.main_subscription (
+  id text primary key,
+  name text not null,
+  description text,
+  duration_value integer,
+  duration_unit text,
+  is_lifetime boolean not null default false,
+  price_stars integer,
+  price_fiat_amount numeric,
+  price_fiat_currency text,
+  crypto_currency text,
+  currency text not null default 'XTR',
+  enabled boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.subscription_chats enable row level security;
 alter table public.subscription_plans enable row level security;
 alter table public.subscription_orders enable row level security;
@@ -248,8 +268,10 @@ alter table public.subscription_jobs enable row level security;
 alter table public.subscription_audit_logs enable row level security;
 alter table public.subscription_connection_codes enable row level security;
 alter table public.subscription_telegram_accounts enable row level security;
+alter table public.main_subscription enable row level security;
 
 -- Additive migration for existing Supabase installations.
+alter table public.users add column if not exists is_admin boolean not null default false;
 alter table public.subscription_orders add column if not exists payment_amount_snapshot numeric;
 alter table public.subscription_orders add column if not exists payment_currency_snapshot text;
 

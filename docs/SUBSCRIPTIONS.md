@@ -65,6 +65,44 @@ POST /api/subscriptions/payments/:id/refund
 
 `DELETE` for a plan deactivates it; it does not delete historical orders. Payment and entitlement records are tenant-scoped.
 
+## Platform main subscription (admin)
+
+In addition to per-creator plans, an admin can configure a single **main subscription** — the platform's primary offer — from the Admin console (**Admin → Subscriptions**). It is stored in the `main_subscription` table (a single row, `id = 'main'`) and exposed read-only to all users at `GET /api/subscriptions/main` (returns `null` when disabled). Admins manage it via:
+
+```text
+GET  /api/admin/subscriptions/main
+PUT  /api/admin/subscriptions/main
+```
+
+The same `createPlanSchema` validates the terms (name, duration, price in Telegram Stars, optional crypto price/currency, lifetime flag). `enabled` toggles whether users see the offer.
+
+## Admin cross-tenant management
+
+Admins (role from `ADMIN_EMAILS` or promoted in the UI) can view, edit and delete any account and its content through `/api/admin/*`:
+
+```text
+GET    /api/admin/users
+GET    /api/admin/users/:id
+PATCH  /api/admin/users/:id          # name, is_admin
+DELETE /api/admin/users/:id          # cascades bots, credentials, chats
+
+GET    /api/admin/bots
+GET    /api/admin/bots/:id
+PATCH  /api/admin/bots/:id           # name, mode
+DELETE /api/admin/bots/:id
+
+GET    /api/admin/credentials
+DELETE /api/admin/credentials/:id
+
+GET    /api/admin/subscriptions
+GET    /api/admin/subscriptions/chats/:id
+PATCH  /api/admin/subscriptions/plans/:id
+DELETE /api/admin/subscriptions/plans/:id
+DELETE /api/admin/subscriptions/chats/:id
+```
+
+Deleting a user cascades to their bots (and sessions/logs), credentials, linked Telegram accounts, connection codes, and subscription chats (and everything under them). An admin cannot remove their own admin role or delete their own account from the console.
+
 ## Customer bot commands
 
 ```text

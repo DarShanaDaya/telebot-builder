@@ -25,12 +25,17 @@ export default function Layout() {
           <NavLink to="/subscriptions" className={({ isActive }) => `side-link ${isActive ? 'active' : ''}`}>
             <span>💳</span> Subscriptions
           </NavLink>
+          {user?.is_admin && (
+            <NavLink to="/admin/users" className={({ isActive }) => `side-link ${isActive ? 'active' : ''}`}>
+              <span>🛡️</span> Admin
+            </NavLink>
+          )}
         </nav>
         <div className="side-footer">
           <div className="user-chip">
             <div className="avatar">{(user?.name || user?.email || '?')[0].toUpperCase()}</div>
             <div className="user-meta">
-              <strong>{user?.name}</strong>
+              <strong>{user?.name} {user?.is_admin && <span className="badge admin">admin</span>}</strong>
               <span className="muted">{user?.email}</span>
             </div>
           </div>

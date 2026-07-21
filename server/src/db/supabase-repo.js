@@ -27,6 +27,58 @@ export function createSupabaseRepo({ url, serviceKey }) {
     async findUserById(id) {
       return one(await unwrap(sb.from('users').select('*').eq('id', id).limit(1), 'findUserById'));
     },
+    async updateUser(id, patch) {
+      await unwrap(sb.from('users').update(patch).eq('id', id), 'updateUser');
+      return this.findUserById(id);
+    },
+    async listUsers() {
+      return unwrap(sb.from('users').select('*').order('created_at', { ascending: false }), 'listUsers');
+    },
+    // Supabase FKs cascade: deleting a user removes their bots, credentials,
+    // subscription chats (and everything under them), connection codes, linked
+    // Telegram accounts, and orders; audit log rows are nulled on the user.
+    async deleteUser(id) {
+      await unwrap(sb.from('users').delete().eq('id', id), 'deleteUser');
+    },
+
+    // ---- admin cross-tenant views ---------------------------------------
+    async listAllBots() {
+      return unwrap(sb.from('bots').select('*, users(email)').order('created_at', { ascending: false }), 'listAllBots')
+        .then((rows) => rows.map((r) => ({ ...r, owner_email: r.users?.email || null, users: undefined })));
+    },
+    async listAllCredentials() {
+      return unwrap(sb.from('credentials').select('*, users(email)').order('created_at', { ascending: false }), 'listAllCredentials')
+        .then((rows) => rows.map((r) => ({ ...r, owner_email: r.users?.email || null, users: undefined })));
+    },
+    async listAllSubscriptionChats() {
+      return unwrap(sb.from('subscription_chats').select('*, users(email)').order('created_at', { ascending: false }), 'listAllSubscriptionChats')
+        .then((rows) => rows.map((r) => ({ ...r, owner_email: r.users?.email || null, users: undefined })));
+    },
+
+    // ---- subscription chat cascade delete -------------------------------
+    async deleteSubscriptionChat(id) {
+      // FKs defined with ON DELETE CASCADE handle plans, orders, entitlements,
+      // invite links and payments automatically.
+      await unwrap(sb.from('subscription_chats').delete().eq('id', id), 'deleteSubscriptionChat');
+    },
+
+    // ---- main (platform) subscription -----------------------------------
+    async getMainSubscription() {
+      return one(await unwrap(sb.from('main_subscription').select('*').eq('id', 'main').limit(1), 'getMainSubscription'));
+    },
+    async upsertMainSubscription(row) {
+      const normalized = { ...row };
+      if ('is_lifetime' in normalized) normalized.is_lifetime = Boolean(normalized.is_lifetime);
+      if ('enabled' in normalized) normalized.enabled = Boolean(normalized.enabled);
+      const existing = await this.getMainSubscription();
+      if (existing) {
+        const { id, created_at, ...patch } = normalized;
+        await unwrap(sb.from('main_subscription').update(patch).eq('id', 'main'), 'upsertMainSubscription');
+      } else {
+        await unwrap(sb.from('main_subscription').insert({ id: 'main', ...row }), 'upsertMainSubscription');
+      }
+      return this.getMainSubscription();
+    },
 
     // ---- bots ----------------------------------------------------------
     async createBot(b) {

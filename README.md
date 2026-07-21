@@ -206,6 +206,19 @@ POST /webhooks/telegram/:botId/:secret   (public, Telegram only)
 
 The paid-access subscription module is documented in [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md). It supports Telegram Stars plans, NOWPayments crypto checkout, one-use invite links, membership activation, reminders, expiry removal, refunds, and creator-side subscriber management. Creator payouts are intentionally not included in the MVP.
 
+### 🛡️ Admin console
+
+The platform has a built-in admin role. Promote the first admin by listing their email in `ADMIN_EMAILS` (comma-separated) in `.env` before they register/log in; afterwards any admin can promote or demote other accounts from **Admin → Accounts** in the UI.
+
+Admins can, from **Admin** in the sidebar:
+
+- **Accounts** — list every user with their resource counts; view an account's bots (developments), credentials and subscription chats (content); edit the display name and admin role; delete an account and **all** of its data.
+- **Bots** — view every bot across all accounts (owner, mode, status, node counts); open the builder / sessions / logs; edit name & connection mode; delete.
+- **Credentials** — list every stored credential (secrets masked); delete.
+- **Subscriptions** — **configure the platform *main subscription*** (name, price, duration, crypto, lifetime, enable/disable), and manage every user's subscription chats: activate/deactivate/delete plans, and delete chats with all their subscribers.
+
+The main subscription is configured only by an admin and is surfaced read-only to regular users at `GET /api/subscriptions/main`.
+
 ## 🧭 Roadmap ideas
 
 - Broadcast messages to stored sessions

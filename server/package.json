@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "test": "node test/selftest.js"
+    "test": "node test/selftest.js",
+    "test:admin": "node test/admin-smoke.mjs"
   },
   "engines": {
     "node": ">=22.5.0"

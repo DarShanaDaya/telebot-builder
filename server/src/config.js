@@ -77,6 +77,11 @@ export const config = {
   // Production API access is same-origin unless explicit frontend origins are
   // configured. Development remains permissive for the Vite dev server.
   corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
+  // Bootstrap admin accounts by email. Any user who registers or logs in with
+  // one of these addresses is automatically granted the admin role. Once an
+  // admin exists they can promote/demote others from the Admin console, so
+  // this list is only needed for the very first admin. Comma-separated emails.
+  adminEmails: (process.env.ADMIN_EMAILS || '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean),
   jwtSecret: secrets.jwtSecret,
   jwtExpiresIn: '7d',
   platformSecret: secrets.platformSecret,

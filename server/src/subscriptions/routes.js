@@ -57,6 +57,31 @@ export function subscriptionsRouter() {
   const r = Router();
   r.use(requireAuth);
 
+  // Platform-wide "main" subscription, configured by an admin. Read-only for
+  // regular users; returns only the public offer (never secrets).
+  r.get('/main', ah(async (_req, res) => {
+    const row = await db.getMainSubscription();
+    if (!row || !row.enabled) {
+      res.json({ subscription: null });
+      return;
+    }
+    res.json({
+      subscription: {
+        id: row.id,
+        name: row.name,
+        description: row.description || '',
+        duration_value: row.duration_value,
+        duration_unit: row.duration_unit,
+        is_lifetime: Boolean(row.is_lifetime),
+        price_stars: row.price_stars,
+        price_fiat_amount: row.price_fiat_amount,
+        price_fiat_currency: row.price_fiat_currency,
+        crypto_currency: row.crypto_currency,
+        currency: row.currency,
+      },
+    });
+  }));
+
   r.post('/connections', ah(async (req, res) => {
     const code = crypto.randomBytes(24).toString('base64url');
     const now = new Date();

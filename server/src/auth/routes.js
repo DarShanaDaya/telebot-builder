@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { db } from '../db/index.js';
+import { config } from '../config.js';
 import { signToken, requireAuth } from './middleware.js';
 import { ah, badRequest, conflict, unauthorized, zodError } from '../lib/http.js';
 import { rateLimit } from '../lib/rate-limit.js';
@@ -18,7 +19,7 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
-const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name, created_at: u.created_at });
+const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name, is_admin: Boolean(u.is_admin), created_at: u.created_at });
 
 export function authRouter() {
   const r = Router();
@@ -34,6 +35,8 @@ export function authRouter() {
       email,
       name: parsed.data.name?.trim() || email.split('@')[0],
       password_hash: bcrypt.hashSync(parsed.data.password, 10),
+      // Bootstrap admins from the configured ADMIN_EMAILS list.
+      is_admin: config.adminEmails.includes(email),
       created_at: new Date().toISOString(),
     };
     await db.createUser(user);

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT UNIQUE NOT NULL,
   name TEXT,
   password_hash TEXT NOT NULL,
+  is_admin INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bots (
@@ -222,6 +223,23 @@ CREATE TABLE IF NOT EXISTS logs (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_logs_bot ON logs(bot_id, id);
+
+CREATE TABLE IF NOT EXISTS main_subscription (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  duration_value INTEGER,
+  duration_unit TEXT,
+  is_lifetime INTEGER NOT NULL DEFAULT 0,
+  price_stars INTEGER,
+  price_fiat_amount REAL,
+  price_fiat_currency TEXT,
+  crypto_currency TEXT,
+  currency TEXT NOT NULL DEFAULT 'XTR',
+  enabled INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
 
 // SQLite repository backed by the built-in node:sqlite driver — zero native
@@ -241,6 +259,7 @@ export function createSqliteRepo() {
     'ALTER TABLE subscription_orders ADD COLUMN payment_currency_snapshot TEXT',
     'ALTER TABLE subscription_jobs ADD COLUMN claimed_by TEXT',
     'ALTER TABLE subscription_jobs ADD COLUMN lease_until TEXT',
+    'ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0',
   ]) {
     try { db.exec(statement); } catch (error) {
       if (!/duplicate column name/i.test(error.message || '')) throw error;
@@ -252,10 +271,32 @@ export function createSqliteRepo() {
 
     // ---- users -----------------------------------------------------------
     async createUser(u) {
-      db.prepare('INSERT INTO users (id, email, name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)').run(
-        u.id, u.email, u.name, u.password_hash, u.created_at
+      db.prepare('INSERT INTO users (id, email, name, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        u.id, u.email, u.name, u.password_hash, u.is_admin ? 1 : 0, u.created_at
       );
       return u;
+    },
+    async updateUser(id, patch) {
+      const keys = Object.keys(patch);
+      if (!keys.length) return this.findUserById(id);
+      const normalized = { ...patch };
+      if ('is_admin' in normalized) normalized.is_admin = normalized.is_admin ? 1 : 0;
+      const set = keys.map((k) => `${k} = ?`).join(', ');
+      db.prepare(`UPDATE users SET ${set} WHERE id = ?`).run(...keys.map((k) => normalized[k]), id);
+      return this.findUserById(id);
+    },
+    async listUsers() {
+      return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all();
+    },
+    async deleteUser(id) {
+      const bots = db.prepare('SELECT id FROM bots WHERE user_id = ?').all(id);
+      for (const b of bots) await this.deleteBot(b.id);
+      db.prepare('DELETE FROM credentials WHERE user_id = ?').run(id);
+      const chats = db.prepare('SELECT id FROM subscription_chats WHERE user_id = ?').all(id);
+      for (const c of chats) await this.deleteSubscriptionChat(c.id);
+      db.prepare('DELETE FROM subscription_telegram_accounts WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM subscription_connection_codes WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM users WHERE id = ?').run(id);
     },
     async findUserByEmail(email) {
       return db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase()) || null;
@@ -609,6 +650,62 @@ export function createSqliteRepo() {
       if (!keys.length) return this.getSubscriptionEntitlement(id);
       db.prepare(`UPDATE subscription_entitlements SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => patch[k]), id);
       return this.getSubscriptionEntitlement(id);
+    },
+
+    // ---- admin cross-tenant views ---------------------------------------
+    async listAllBots() {
+      return db.prepare(`SELECT b.*, u.email AS owner_email FROM bots b
+        JOIN users u ON u.id = b.user_id ORDER BY b.created_at DESC`).all();
+    },
+    async listAllCredentials() {
+      return db.prepare(`SELECT c.*, u.email AS owner_email FROM credentials c
+        JOIN users u ON u.id = c.user_id ORDER BY c.created_at DESC`).all();
+    },
+    async listAllSubscriptionChats() {
+      return db.prepare(`SELECT sc.*, u.email AS owner_email FROM subscription_chats sc
+        JOIN users u ON u.id = sc.user_id ORDER BY sc.created_at DESC`).all();
+    },
+
+    // ---- subscription chat cascade delete --------------------------------
+    async deleteSubscriptionChat(id) {
+      const entitlements = db.prepare('SELECT id FROM subscription_entitlements WHERE chat_id = ?').all(id);
+      for (const e of entitlements) {
+        db.prepare('DELETE FROM subscription_invite_links WHERE entitlement_id = ?').run(e.id);
+      }
+      db.prepare('DELETE FROM subscription_entitlements WHERE chat_id = ?').run(id);
+      const orders = db.prepare('SELECT id FROM subscription_orders WHERE chat_id = ?').all(id);
+      for (const o of orders) {
+        db.prepare('DELETE FROM subscription_payments WHERE order_id = ?').run(o.id);
+      }
+      db.prepare('DELETE FROM subscription_orders WHERE chat_id = ?').run(id);
+      db.prepare('DELETE FROM subscription_plans WHERE chat_id = ?').run(id);
+      db.prepare('DELETE FROM subscription_chats WHERE id = ?').run(id);
+    },
+
+    // ---- main (platform) subscription ------------------------------------
+    async getMainSubscription() {
+      return db.prepare("SELECT * FROM main_subscription WHERE id = 'main'").get() || null;
+    },
+    async upsertMainSubscription(row) {
+      const existing = await this.getMainSubscription();
+      const normalized = { ...row };
+      if ('is_lifetime' in normalized) normalized.is_lifetime = normalized.is_lifetime ? 1 : 0;
+      if ('enabled' in normalized) normalized.enabled = normalized.enabled ? 1 : 0;
+      if (existing) {
+        const keys = Object.keys(normalized).filter((k) => k !== 'id' && k !== 'created_at');
+        db.prepare(`UPDATE main_subscription SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = 'main'`).run(...keys.map((k) => normalized[k]));
+      } else {
+        db.prepare(`INSERT INTO main_subscription
+          (id, name, description, duration_value, duration_unit, is_lifetime, price_stars,
+           price_fiat_amount, price_fiat_currency, crypto_currency, currency, enabled, created_at, updated_at)
+          VALUES ('main', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          row.name, row.description ?? null, row.duration_value ?? null, row.duration_unit ?? null,
+          normalized.is_lifetime ?? 0, row.price_stars ?? null, row.price_fiat_amount ?? null,
+          row.price_fiat_currency ?? null, row.crypto_currency ?? null, row.currency ?? 'XTR',
+          normalized.enabled ?? 0, row.created_at, row.updated_at
+        );
+      }
+      return this.getMainSubscription();
     },
 
     // ---- logs ------------------------------------------------------------

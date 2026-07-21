@@ -10,6 +10,7 @@ import { authRouter } from './auth/routes.js';
 import { botsRouter } from './bots/routes.js';
 import { credentialsRouter } from './credentials/routes.js';
 import { subscriptionsRouter } from './subscriptions/routes.js';
+import { adminRouter } from './admin/routes.js';
 import { nowPaymentsWebhookRouter } from './subscriptions/nowpayments-webhook.js';
 import { webhooksRouter } from './routes/webhooks.js';
 import { initManager, shutdownManager } from './hub/manager.js';
@@ -44,6 +45,7 @@ export function buildApp() {
   app.use('/api/bots', botsRouter());
   app.use('/api/credentials', credentialsRouter());
   app.use('/api/subscriptions', subscriptionsRouter());
+  app.use('/api/admin', adminRouter());
   app.use('/webhooks', webhooksRouter());
   app.use('/webhooks', nowPaymentsWebhookRouter());
 

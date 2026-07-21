@@ -8,6 +8,12 @@ import Credentials from './pages/Credentials';
 import Sessions from './pages/Sessions';
 import Logs from './pages/Logs';
 import Subscriptions from './pages/Subscriptions';
+import AdminUsers from './pages/AdminUsers';
+import AdminUserDetail from './pages/AdminUserDetail';
+import AdminBots from './pages/AdminBots';
+import AdminBotDetail from './pages/AdminBotDetail';
+import AdminCredentials from './pages/AdminCredentials';
+import AdminSubscriptions from './pages/AdminSubscriptions';
 
 export default function App() {
   return (
@@ -20,6 +26,12 @@ export default function App() {
         <Route path="/subscriptions" element={<Subscriptions />} />
         <Route path="/bots/:botId/sessions" element={<Sessions />} />
         <Route path="/bots/:botId/logs" element={<Logs />} />
+        <Route path="/admin/users" element={<AdminUsers />} />
+        <Route path="/admin/users/:userId" element={<AdminUserDetail />} />
+        <Route path="/admin/bots" element={<AdminBots />} />
+        <Route path="/admin/bots/:botId" element={<AdminBotDetail />} />
+        <Route path="/admin/credentials" element={<AdminCredentials />} />
+        <Route path="/admin/subscriptions" element={<AdminSubscriptions />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
